@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Agent Architecture v2 - Data Scientist Agent</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --ink: #1f2937;
+      --muted: #4b5563;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --orange: #ea580c;
+      --purple: #7c3aed;
+      --teal: #0d9488;
+      --slate: #334155;
+      --line: #94a3b8;
+      --card: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: linear-gradient(180deg, #f8fbff 0%, #f5f7fb 100%);
+    }
+
+    .page {
+      width: 1700px;
+      margin: 18px auto 24px;
+      border: 1px solid #dbe2ef;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 20px 24px 12px;
+      border-bottom: 1px dashed #d6deeb;
+      background: #fbfdff;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 40px;
+      line-height: 1.15;
+      letter-spacing: 0.2px;
+    }
+    .header p {
+      margin: 8px 0 0;
+      font-size: 22px;
+      color: #0f4ca8;
+      font-weight: 600;
+    }
+
+    .canvas {
+      position: relative;
+      width: 1700px;
+      height: 850px;
+      background:
+        radial-gradient(circle at 15% 6%, #e9f2ff 0, transparent 35%),
+        radial-gradient(circle at 85% 0%, #f0f8ff 0, transparent 30%),
+        #fff;
+    }
+
+    .card {
+      position: absolute;
+      background: var(--card);
+      border: 2px solid var(--slate);
+      border-radius: 14px;
+      padding: 14px 16px;
+      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06);
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 28px;
+      line-height: 1.2;
+    }
+
+    .card h4 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .small {
+      font-size: 17px;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+
+    .list {
+      margin: 8px 0 0 0;
+      padding: 0 0 0 18px;
+      font-size: 17px;
+      line-height: 1.35;
+    }
+
+    .list li { margin-bottom: 5px; }
+
+    .user-note {
+      position: absolute;
+      left: 22px;
+      top: 248px;
+      width: 180px;
+      padding: 14px;
+      border: 2px solid var(--blue);
+      border-radius: 14px;
+      background: #f4f9ff;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    .user-icon {
+      position: absolute;
+      left: 30px;
+      top: 468px;
+      width: 150px;
+      text-align: center;
+      color: #295188;
+      font-size: 24px;
+      font-weight: 700;
+    }
+    .user-icon .emoji {
+      font-size: 62px;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .claude {
+      left: 700px;
+      top: 18px;
+      width: 340px;
+      height: 130px;
+      border-color: var(--blue);
+      background: #f5f9ff;
+    }
+
+    .fastapi {
+      left: 220px;
+      top: 200px;
+      width: 360px;
+      height: 430px;
+      border-color: var(--green);
+      background: #f6fff9;
+    }
+
+    .runtime {
+      left: 630px;
+      top: 165px;
+      width: 420px;
+      height: 500px;
+      border-color: var(--orange);
+      background: #fffaf5;
+    }
+
+    .tools {
+      left: 1090px;
+      top: 190px;
+      width: 310px;
+      height: 420px;
+      border-color: var(--purple);
+      background: #faf6ff;
+    }
+
+    .storage {
+      left: 1420px;
+      top: 210px;
+      width: 255px;
+      height: 380px;
+      border-color: var(--blue);
+      background: #f5f9ff;
+    }
+
+    .exec {
+      left: 1090px;
+      top: 625px;
+      width: 585px;
+      height: 165px;
+      border-color: var(--teal);
+      background: #f4fffe;
+    }
+
+    .sub-card {
+      border: 1.8px solid #cfd8e8;
+      border-radius: 11px;
+      padding: 10px 12px;
+      margin-top: 10px;
+      background: #fff;
+    }
+
+    .sub-card h5 {
+      margin: 0 0 6px;
+      font-size: 18px;
+    }
+
+    .step {
+      border: 1.5px solid #f3c89d;
+      background: #fff;
+      border-radius: 10px;
+      padding: 9px 10px;
+      margin-top: 8px;
+      font-size: 16px;
+      line-height: 1.25;
+    }
+
+    .step strong {
+      color: #b45309;
+      font-size: 17px;
+    }
+
+    .flow {
+      border-top: 1px dashed #d6deeb;
+      padding: 16px 20px 20px;
+      background: #fcfdff;
+    }
+
+    .flow h3 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      color: #1e3a8a;
+    }
+
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+      margin-bottom: 10px;
+    }
+
+    .flow-item {
+      flex: 1;
+      border: 1.8px solid #d1d8e6;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+      min-height: 85px;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .num {
+      display: inline-flex;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      margin-right: 8px;
+      color: #fff;
+      font-size: 14px;
+    }
+
+    .n1 { background: #16a34a; }
+    .n2 { background: #0284c7; }
+    .n3 { background: #ea580c; }
+    .n4 { background: #7c3aed; }
+    .n5 { background: #0d9488; }
+    .n6 { background: #1d4ed8; }
+    .n7 { background: #16a34a; }
+
+    .foot {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .panel {
+      border: 1.8px solid #d1d8e6;
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: #fff;
+      font-size: 15px;
+      line-height: 1.3;
+    }
+
+    .stack-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .tag {
+      border: 1.5px solid #c7d2fe;
+      color: #1e3a8a;
+      background: #eef2ff;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    svg.arrows {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .lbl {
+      font-size: 16px;
+      fill: #334155;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <h1>AI Agent Architecture v2</h1>
+      <p>Data Scientist Agent (FastAPI + Anthropic SDK + ReAct + Python Execution)</p>
+    </div>
+
+    <div class="canvas">
+      <div class="user-note">Please analyze <strong>turbine_data.csv</strong>, validate units, and export a notebook.</div>
+      <div class="user-icon"><span class="emoji">🧑‍🔬</span>User</div>
+
+      <div class="card claude">
+        <h3>Claude API (Anthropic)</h3>
+        <div class="small">Model: <strong>claude-sonnet-4-6</strong></div>
+        <div class="small">messages.create() + tool orchestration</div>
+      </div>
+
+      <div class="card fastapi">
+        <h3>FastAPI Backend</h3>
+        <div class="sub-card">
+          <h4>Routes</h4>
+          <div class="small"><strong>Unchanged MVP:</strong> POST /api/v1/chat</div>
+          <div class="small"><strong>New:</strong> POST /api/v1/analysis/chat</div>
+          <div class="small">GET /analysis/{session}/figures/{id}</div>
+          <div class="small">GET /analysis/{session}/notebook</div>
+          <div class="small">GET /api/v1/datasets + /schema</div>
+        </div>
+        <div class="sub-card">
+          <h4>Session Store</h4>
+          <div class="small">InMemorySessionStore (memory.py)</div>
+          <div class="small">AgentSession + AnalysisSession</div>
+          <div class="small">get_or_create_analysis()</div>
+        </div>
+      </div>
+
+      <div class="card runtime">
+        <h3>Agent Runtime (DataScienceAgentService)</h3>
+        <div class="small">Explicit ReAct loop with auditable trace</div>
+        <div class="step"><strong>1.</strong> Build system prompt with PhysicalContextInjector (domain docs + datasets).</div>
+        <div class="step"><strong>2.</strong> Call Claude with messages + tool definitions.</div>
+        <div class="step"><strong>3.</strong> Parse <em>Thought / Action / Action Input</em> or <em>Final Answer</em>.</div>
+        <div class="step"><strong>4.</strong> Dispatch tool, append Observation, continue loop.</div>
+        <div class="step"><strong>5.</strong> Validate physical units + magnitude, then return final response.</div>
+      </div>
+
+      <div class="card tools">
+        <h3>Tools (Python Functions)</h3>
+        <div class="sub-card">
+          <h5>Knowledge</h5>
+          <div class="small">list/read/search domain docs, inspect datasets</div>
+        </div>
+        <div class="sub-card">
+          <h5>Analysis</h5>
+          <div class="small">execute_python_code, list/get figures</div>
+        </div>
+        <div class="sub-card">
+          <h5>Validation + Output</h5>
+          <div class="small">validate_physical_units, convert_units, export_notebook</div>
+        </div>
+      </div>
+
+      <div class="card storage">
+        <h3>Local Filesystem</h3>
+        <ul class="list">
+          <li><strong>/data/domain_docs/</strong></li>
+          <li><strong>/data/datasets/</strong></li>
+          <li><strong>/outputs/figures/</strong></li>
+          <li><strong>/outputs/notebooks/</strong></li>
+        </ul>
+      </div>
+
+      <div class="card exec">
+        <h3>Execution & Validation Infrastructure</h3>
+        <div class="small">Pluggable backends selected by CODE_EXECUTION_BACKEND</div>
+        <div class="stack-tags">
+          <span class="tag">SubprocessCodeRunner</span>
+          <span class="tag">JupyterKernelManager</span>
+          <span class="tag">Anthropic Code Execution Tool</span>
+          <span class="tag">pint UnitRegistry</span>
+        </div>
+      </div>
+
+      <svg class="arrows" viewBox="0 0 1700 850" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
+          </marker>
+          <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
+          </marker>
+        </defs>
+
+        <!-- user -> fastapi -->
+        <line x1="180" y1="500" x2="220" y2="500" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="198" y="488" class="lbl">request</text>
+
+        <!-- fastapi -> runtime -->
+        <line x1="580" y1="385" x2="630" y2="385" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="587" y="368" class="lbl">messages + tools</text>
+
+        <!-- runtime -> fastapi -->
+        <line x1="630" y1="470" x2="580" y2="470" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="586" y="492" class="lbl">final response</text>
+
+        <!-- runtime -> claude -->
+        <line x1="835" y1="165" x2="835" y2="148" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+        <text x="720" y="154" class="lbl" fill="#1d4ed8">messages.create()</text>
+
+        <!-- claude -> runtime -->
+        <line x1="905" y1="148" x2="905" y2="165" stroke="#2563eb" stroke-dasharray="7 6" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+        <text x="913" y="160" class="lbl" fill="#1d4ed8">text + action hints</text>
+
+        <!-- runtime -> tools -->
+        <line x1="1050" y1="395" x2="1090" y2="395" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1042" y="377" class="lbl">tool call</text>
+
+        <!-- tools -> runtime -->
+        <line x1="1090" y1="450" x2="1050" y2="450" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1058" y="470" class="lbl">observation</text>
+
+        <!-- tools -> storage -->
+        <line x1="1400" y1="350" x2="1420" y2="350" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
+        <line x1="1420" y1="430" x2="1400" y2="430" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1398" y="338" class="lbl">read/write</text>
+
+        <!-- runtime -> exec -->
+        <line x1="940" y1="665" x2="1090" y2="665" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="946" y="648" class="lbl" fill="#0f766e">execute + validate</text>
+
+        <!-- exec -> tools -->
+        <line x1="1230" y1="625" x2="1230" y2="610" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+
+    <div class="flow">
+      <h3>Flow (Order of Operations)</h3>
+      <div class="row">
+        <div class="flow-item"><span class="num n1">1</span>User sends request to <strong>/api/v1/analysis/chat</strong>.</div>
+        <div class="flow-item"><span class="num n2">2</span>Backend loads/creates AnalysisSession and prepares context.</div>
+        <div class="flow-item"><span class="num n3">3</span>Agent loop calls Claude and receives next action/final answer.</div>
+        <div class="flow-item"><span class="num n4">4</span>Tool dispatch executes Python/data/knowledge actions.</div>
+        <div class="flow-item"><span class="num n5">5</span>Validation layer enforces units and physical plausibility.</div>
+        <div class="flow-item"><span class="num n6">6</span>Agent returns answer + react trace + figures + notebook state.</div>
+        <div class="flow-item"><span class="num n7">7</span>Client fetches figure PNG / notebook via analysis endpoints.</div>
+      </div>
+
+      <div class="foot">
+        <div class="panel">
+          <strong>Design Highlights</strong><br />
+          • Built on top of MVP: existing <code>/api/v1/chat</code> and <code>AgentService</code> remain unchanged.<br />
+          • Explicit ReAct loop for auditability and controlled multi-step analysis.<br />
+          • Pluggable execution backends (subprocess / jupyter / anthropic) selected by config.<br />
+          • Physical safety checks (units + ranges + hard laws) before final answer.<br />
+          • Secure local file access using path-resolution guards.
+        </div>
+        <div class="panel">
+          <strong>Tech Stack</strong>
+          <div class="stack-tags">
+            <span class="tag">FastAPI</span>
+            <span class="tag">Anthropic Python SDK</span>
+            <span class="tag">Claude Sonnet 4.6</span>
+            <span class="tag">pandas / numpy</span>
+            <span class="tag">matplotlib / seaborn</span>
+            <span class="tag">jupyter_client + nbformat</span>
+            <span class="tag">pint</span>
+            <span class="tag">Pydantic v2</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

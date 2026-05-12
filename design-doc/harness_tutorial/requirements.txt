@@ -1,0 +1,20 @@
+anthropic>=0.40.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Phase 3 — File-Based RAG (step7b) — all backends optional
+rank-bm25>=0.2.2       # Option A: BM25 keyword retrieval (no embeddings)
+sentence-transformers>=2.2.0  # Options B, C, D: semantic embeddings
+faiss-cpu>=1.7.4       # Option C: FAISS approximate nearest neighbour
+lancedb>=0.5.0         # Option D: Apache Lance columnar vector store
+
+# Phase 2 — Data Analyst Agent (step5)
+nbformat>=5.0.0        # Jupyter notebook creation (.ipynb)
+pandas>=2.0.0          # data analysis (also pre-installed in code execution sandbox)
+numpy>=1.24.0          # numerical ops (also pre-installed in code execution sandbox)
+scipy>=1.11.0          # signal analysis (also pre-installed in code execution sandbox)
+matplotlib>=3.7.0      # plotting (also pre-installed in code execution sandbox)
+seaborn>=0.12.0        # statistical plotting (also pre-installed in code execution sandbox)
+
+# Phase 4 — LLM Eval (step11)
+# No extra deps; uses Batch API + dataclasses from stdlib
