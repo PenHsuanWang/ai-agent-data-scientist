@@ -16,6 +16,7 @@ from app.schemas.analysis import (
     FigureRef,
     ReActStep,
 )
+from app.core.config import settings
 from app.services.data_agent import data_science_agent
 from app.services.memory import analysis_session_store
 
@@ -73,7 +74,7 @@ async def analysis_chat(request: AnalysisRequest) -> AnalysisResponse:
             notebook_available=session.notebook_path is not None,
             unit_validations=[u.__dict__ for u in session.unit_context],
             iterations_used=len(session.react_trace),
-            model=__import__("app.core.config", fromlist=["settings"]).settings.claude_model,
+            model=settings.claude_model,
             status="completed",
         )
 
