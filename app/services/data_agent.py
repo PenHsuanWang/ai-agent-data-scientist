@@ -20,7 +20,7 @@ from typing import Any, Callable
 from anthropic import AsyncAnthropic
 
 from app.core.config import settings
-from app.domain.analysis_models import AnalysisSession
+from app.domain.analysis_models import AnalysisSession, PhysicalUnit
 from app.domain.exceptions import ReActLoopError, ReActParseError
 from app.infrastructure.code_runner import CodeRunner, CodeRunnerFactory
 from app.infrastructure.unit_registry import (
@@ -224,6 +224,43 @@ class DataScienceAgentService:
         self, session: AnalysisSession, runner: CodeRunner
     ) -> dict[str, Callable[..., str]]:
         """Build the tool dispatch table for this session."""
+
+        def _wrap_validate(inp: dict[str, Any]) -> str:
+            res = validate_physical_units(inp["quantity"], inp["value"], inp["unit"])
+            try:
+                data = json.loads(res)
+                session.log_unit_validation(
+                    PhysicalUnit(
+                        quantity=data.get("quantity", inp["quantity"]),
+                        value=data.get("value", inp["value"]),
+                        unit=data.get("unit", inp["unit"]),
+                        is_valid=data.get("is_valid", False),
+                        message=data.get("message", ""),
+                        canonical_value=data.get("canonical_value"),
+                        canonical_unit=data.get("canonical_unit"),
+                    )
+                )
+            except Exception as exc:
+                logger.error("Failed to log unit validation: %s", exc)
+            return res
+
+        def _wrap_check_magnitude(inp: dict[str, Any]) -> str:
+            res = check_magnitude(inp["quantity"], inp["value"], inp["unit"])
+            try:
+                data = json.loads(res)
+                session.log_unit_validation(
+                    PhysicalUnit(
+                        quantity=data.get("quantity", inp["quantity"]),
+                        value=data.get("value", inp["value"]),
+                        unit=data.get("unit", inp["unit"]),
+                        is_valid=data.get("is_plausible", False),
+                        message=data.get("message", ""),
+                    )
+                )
+            except Exception as exc:
+                logger.error("Failed to log magnitude check: %s", exc)
+            return res
+
         return {
             # Knowledge
             "list_domain_documents": lambda _: list_domain_documents(),
@@ -247,15 +284,11 @@ class DataScienceAgentService:
                 session, inp["figure_id"], inp["filename"]
             ),
             # Validation
-            "validate_physical_units": lambda inp: validate_physical_units(
-                inp["quantity"], inp["value"], inp["unit"]
-            ),
+            "validate_physical_units": _wrap_validate,
             "convert_units": lambda inp: convert_units(
                 inp["value"], inp["from_unit"], inp["to_unit"]
             ),
-            "check_magnitude": lambda inp: check_magnitude(
-                inp["quantity"], inp["value"], inp["unit"]
-            ),
+            "check_magnitude": _wrap_check_magnitude,
         }
 
     async def run(self, session: AnalysisSession, user_message: str) -> str:
