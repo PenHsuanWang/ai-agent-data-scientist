@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Scientist AI Agent - Sequence Flow</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 40px;
+            background-color: #f6f8fa;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+        }
+        .diagram-container {
+            background-color: #ffffff;
+            border: 1px solid #d0d7de;
+            border-radius: 12px;
+            box-shadow: 0 12px 40px rgba(0,0,0,0.08);
+            padding: 30px;
+            /* Grid background simulating drawio */
+            background-image: 
+                linear-gradient(to right, #f0f4f8 1px, transparent 1px),
+                linear-gradient(to bottom, #f0f4f8 1px, transparent 1px);
+            background-size: 20px 20px;
+            overflow-x: auto;
+        }
+        svg {
+            display: block;
+            background: transparent;
+        }
+        text {
+            font-family: inherit;
+        }
+        .title-box {
+            fill: #ffffff;
+            stroke: #d0d7de;
+            stroke-width: 1.5;
+            filter: drop-shadow(0 4px 6px rgba(0,0,0,0.05));
+        }
+        .actor-box {
+            stroke-width: 1.5;
+            filter: drop-shadow(2px 4px 6px rgba(0,0,0,0.06));
+        }
+        .lifeline {
+            stroke: #8b949e;
+            stroke-width: 1.5;
+            stroke-dasharray: 6 5;
+        }
+        .activation {
+            stroke-width: 1.5;
+        }
+        .msg-line {
+            stroke: #24292f;
+            stroke-width: 1.5;
+        }
+        .msg-line-dashed {
+            stroke: #24292f;
+            stroke-width: 1.5;
+            stroke-dasharray: 5 4;
+        }
+        .msg-text {
+            font-size: 13px;
+            fill: #24292f;
+        }
+        .msg-text-alt {
+            font-size: 12px;
+            fill: #d79b00;
+            font-weight: 600;
+        }
+        .msg-text-action {
+            font-size: 12px;
+            fill: #1e40af;
+            font-family: monospace;
+        }
+        .loop-frame {
+            fill: rgba(213, 232, 212, 0.15);
+            stroke: #82b366;
+            stroke-width: 2;
+            rx: 6;
+        }
+        .loop-header {
+            fill: #d5e8d4;
+            stroke: #82b366;
+            stroke-width: 1.5;
+        }
+        .iter-box {
+            fill: #ffffff;
+            stroke: #82b366;
+            stroke-width: 1;
+            rx: 4;
+        }
+        .data-box {
+            fill: #ffffff;
+            stroke: #d79b00;
+            stroke-width: 1;
+            rx: 4;
+        }
+        .inner-box {
+            fill: #ffffff;
+            stroke: #24292f;
+            stroke-width: 1;
+            rx: 4;
+            filter: drop-shadow(2px 2px 3px rgba(0,0,0,0.03));
+        }
+        .note-box {
+            fill: #fffbdd;
+            stroke: #d79b00;
+            stroke-width: 1.5;
+            rx: 6;
+            filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.05));
+        }
+    </style>
+</head>
+<body>
+
+<div class="diagram-container">
+    <svg width="2200" height="1500" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#24292f"/>
+            </marker>
+            <marker id="arrow-alt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#d79b00"/>
+            </marker>
+            <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#1e40af"/>
+            </marker>
+
+            <linearGradient id="blueGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#dae8fc"/><stop offset="100%" stop-color="#c4d6f0"/></linearGradient>
+            <linearGradient id="greenGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#d5e8d4"/><stop offset="100%" stop-color="#bce0ba"/></linearGradient>
+            <linearGradient id="orangeGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffe6cc"/><stop offset="100%" stop-color="#ffd5a6"/></linearGradient>
+            <linearGradient id="redGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f8cecc"/><stop offset="100%" stop-color="#eeb8b6"/></linearGradient>
+            <linearGradient id="purpleGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e1d5e7"/><stop offset="100%" stop-color="#d2c4db"/></linearGradient>
+            <linearGradient id="grayGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#f5f5f5"/><stop offset="100%" stop-color="#e1e1e1"/></linearGradient>
+        </defs>
+
+        <!-- Title -->
+        <text x="20" y="40" font-size="28" font-weight="bold" fill="#24292f">Data Scientist AI Agent - System Sequence Flow</text>
+        <text x="20" y="65" font-size="16" fill="#1e40af" font-weight="bold">FastAPI + ReAct Loop + 16 Tools + Physical Validation</text>
+        
+        <!-- Legend Note -->
+        <rect x="20" y="85" width="220" height="70" class="note-box"/>
+        <text x="30" y="105" font-size="12" font-weight="bold">KEY IMPLEMENTATION NOTES:</text>
+        <text x="30" y="125" font-size="11">• Text-based ReAct (NOT native tool-use)</text>
+        <text x="30" y="140" font-size="11">• Observation cap: 8000 chars</text>
+
+        <!-- Lifelines -->
+        <line x1="120" y1="230" x2="120" y2="1450" class="lifeline"/>
+        <line x1="320" y1="230" x2="320" y2="1450" class="lifeline"/>
+        <line x1="520" y1="230" x2="520" y2="1450" class="lifeline"/>
+        <line x1="750" y1="230" x2="750" y2="1450" class="lifeline"/>
+        <line x1="1080" y1="230" x2="1080" y2="1450" class="lifeline"/>
+        <line x1="1350" y1="230" x2="1350" y2="1450" class="lifeline"/>
+        <line x1="1620" y1="230" x2="1620" y2="1450" class="lifeline"/>
+        <line x1="1840" y1="230" x2="1840" y2="1450" class="lifeline"/>
+        <line x1="2060" y1="230" x2="2060" y2="1450" class="lifeline"/>
+
+        <!-- Actor Headers -->
+        <rect x="50" y="180" width="140" height="50" rx="6" class="actor-box" fill="#f5f5f5" stroke="#666"/>
+        <text x="120" y="202" text-anchor="middle" font-size="14" font-weight="bold">① USER</text>
+
+        <rect x="250" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#orangeGrad)" stroke="#d79b00"/>
+        <text x="320" y="202" text-anchor="middle" font-size="14" font-weight="bold">② API</text>
+        <text x="320" y="220" text-anchor="middle" font-size="12">FASTAPI BACKEND</text>
+
+        <rect x="450" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#blueGrad)" stroke="#6c8ebf"/>
+        <text x="520" y="202" text-anchor="middle" font-size="14" font-weight="bold">③ ANALYSIS</text>
+        <text x="520" y="220" text-anchor="middle" font-size="12">SESSION (in-memory)</text>
+
+        <rect x="680" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#orangeGrad)" stroke="#d79b00"/>
+        <text x="750" y="202" text-anchor="middle" font-size="14" font-weight="bold">④ REACT AGENT</text>
+        <text x="750" y="220" text-anchor="middle" font-size="11">DataScienceAgentService</text>
+
+        <rect x="1010" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#orangeGrad)" stroke="#d79b00"/>
+        <text x="1080" y="202" text-anchor="middle" font-size="14" font-weight="bold">⑤ TOOL GROUPS</text>
+        <text x="1080" y="220" text-anchor="middle" font-size="12">(A / B / C) (16 funcs)</text>
+
+        <rect x="1280" y="180" width="140" height="50" rx="6" class="actor-box" fill="#e1e1e1" stroke="#666"/>
+        <text x="1350" y="202" text-anchor="middle" font-size="14" font-weight="bold">⑥ CODE RUNNER</text>
+        <text x="1350" y="220" text-anchor="middle" font-size="12">(subprocess / jupyter)</text>
+
+        <rect x="1550" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#orangeGrad)" stroke="#d79b00"/>
+        <text x="1620" y="202" text-anchor="middle" font-size="14" font-weight="bold">⑦ DATA SOURCES</text>
+        <text x="1620" y="220" text-anchor="middle" font-size="12">(domain_docs/datasets)</text>
+
+        <rect x="1770" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#orangeGrad)" stroke="#d79b00"/>
+        <text x="1840" y="202" text-anchor="middle" font-size="14" font-weight="bold">⑧ ARTIFACTS</text>
+        <text x="1840" y="220" text-anchor="middle" font-size="12">(figures / notebooks)</text>
+
+        <rect x="1990" y="180" width="140" height="50" rx="6" class="actor-box" fill="url(#redGrad)" stroke="#b85450"/>
+        <text x="2060" y="202" text-anchor="middle" font-size="14" font-weight="bold">⑨ CLAUDE API</text>
+        <text x="2060" y="220" text-anchor="middle" font-size="12">(Anthropic)</text>
+
+        <!-- Activations -->
+        <rect x="313" y="250" width="14" height="1100" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+        <rect x="513" y="290" width="14" height="60" class="activation" fill="#dae8fc" stroke="#6c8ebf"/>
+        <rect x="743" y="370" width="14" height="880" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+
+
+        <!-- Init Phase -->
+        <line x1="120" y1="270" x2="313" y2="270" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="216" y="262" text-anchor="middle" class="msg-text" font-weight="bold">POST /api/v1/analysis/chat</text>
+        <text x="216" y="284" text-anchor="middle" class="msg-text" font-size="11" fill="#666">{ message, session_id }</text>
+
+        <!-- AnalysisStore Inner logic -->
+        <path d="M 327 300 L 350 300 L 350 320 L 327 320" fill="none" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="360" y="315" class="msg-text" font-style="italic">1a. AnalysisSessionStore.get_or_create(session_id)</text>
+        <line x1="327" y1="340" x2="513" y2="340" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="420" y="332" text-anchor="middle" class="msg-text">returns: AnalysisSession (new UUID4)</text>
+
+        <line x1="327" y1="380" x2="743" y2="380" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="530" y="372" text-anchor="middle" class="msg-text" font-weight="bold">Trigger DataScienceAgentService.run(session, user_message)</text>
+
+        <!-- =================== THE MASSIVE REACT LOOP FRAME =================== -->
+        <rect x="360" y="410" width="1730" height="820" class="loop-frame"/>
+        <path d="M 360 440 L 450 440 L 460 430 L 460 410" class="loop-header"/>
+        <text x="370" y="428" font-weight="bold" font-size="13" fill="#333">REACT AGENT LOOP</text>
+        <text x="470" y="430" font-size="14" font-weight="bold" fill="#24292f">— text-based ReAct, NOT native Anthropic tool-use</text>
+        <text x="910" y="430" font-size="12" fill="#666">(max 20 iterations • parse errors inject correction prompt • observations capped at 8000 chars)</text>
+
+        <!-- Iteration 1 (get_coding_standards) -->
+        <rect x="375" y="450" width="150" height="25" class="iter-box"/>
+        <text x="385" y="468" font-size="12" font-weight="bold">Iter 1: get_coding_standards</text>
+
+        <rect x="2053" y="460" width="14" height="60" class="activation" fill="#f8cecc" stroke="#b85450"/>
+        <line x1="757" y1="470" x2="2053" y2="470" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1400" y="462" text-anchor="middle" class="msg-text">2a. messages.create(model, system_prompt, messages)</text>
+
+        <line x1="2053" y1="510" x2="757" y2="510" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1600" y="490" class="msg-text" fill="#1e40af" font-style="italic">"Thought: I should read coding standards first."</text>
+        <text x="1600" y="505" class="msg-text-action">Action: get_coding_standards | Action Input: {}</text>
+
+        <!-- parse internal -->
+        <rect x="850" y="525" width="280" height="20" class="data-box"/>
+        <text x="860" y="539" font-size="11" font-family="monospace">_parse_react(raw_text) &rarr; {action: "get_coding_standards"}</text>
+
+        <rect x="1073" y="550" width="14" height="60" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+        <line x1="757" y1="560" x2="1073" y2="560" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="915" y="552" text-anchor="middle" class="msg-text">4. Dispatch tool: get_coding_standards({})</text>
+
+        <rect x="1100" y="545" width="130" height="40" class="inner-box"/>
+        <text x="1110" y="560" font-size="11" font-weight="bold" fill="#1e40af">Group A (Knowledge)</text>
+        <text x="1110" y="575" font-size="11">get_coding_standards()</text>
+
+        <line x1="1230" y1="565" x2="1620" y2="565" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1425" y="557" text-anchor="middle" class="msg-text">read_domain_document("coding_standards.md")</text>
+
+        <rect x="1480" y="575" width="130" height="25" rx="12" fill="#d5e8d4" stroke="#82b366"/>
+        <text x="1545" y="592" text-anchor="middle" font-size="11">Markdown text (&le; 50 KB)</text>
+
+        <line x1="1073" y1="600" x2="757" y2="600" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="915" y="592" text-anchor="middle" class="msg-text">Observation (Markdown doc)</text>
+        <text x="915" y="612" text-anchor="middle" font-size="11" fill="#666">session.add_assistant_message(...) | session.add_user_message("Observation: ...")</text>
+
+        <!-- Divider -->
+        <line x1="360" y1="630" x2="2090" y2="630" stroke="#82b366" stroke-dasharray="2 4"/>
+
+        <!-- Iteration 2 (inspect_dataset) -->
+        <rect x="375" y="640" width="150" height="25" class="iter-box"/>
+        <text x="385" y="658" font-size="12" font-weight="bold">Iter 2: inspect_dataset</text>
+
+        <rect x="2053" y="650" width="14" height="60" class="activation" fill="#f8cecc" stroke="#b85450"/>
+        <line x1="757" y1="660" x2="2053" y2="660" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1400" y="652" text-anchor="middle" class="msg-text">2a. messages.create(...)</text>
+
+        <line x1="2053" y1="700" x2="757" y2="700" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1600" y="680" class="msg-text" fill="#1e40af" font-style="italic">"Thought: Now inspect the dataset structure."</text>
+        <text x="1600" y="695" class="msg-text-action">Action: inspect_dataset | Action Input: {"file_name": "power_plant_data.csv"}</text>
+
+        <!-- parse internal -->
+        <rect x="850" y="715" width="280" height="20" class="data-box"/>
+        <text x="860" y="729" font-size="11" font-family="monospace">_parse_react(raw_text) &rarr; {action: "inspect_dataset"}</text>
+
+        <rect x="1073" y="740" width="14" height="60" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+        <line x1="757" y1="750" x2="1073" y2="750" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="915" y="742" text-anchor="middle" class="msg-text">4. Dispatch tool: inspect_dataset(file_name)</text>
+
+        <rect x="1100" y="735" width="130" height="40" class="inner-box"/>
+        <text x="1110" y="750" font-size="11" font-weight="bold" fill="#1e40af">Group A (Knowledge)</text>
+        <text x="1110" y="765" font-size="11">inspect_dataset (pandas)</text>
+
+        <line x1="1230" y1="755" x2="1620" y2="755" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1425" y="747" text-anchor="middle" class="msg-text">pandas.read_csv("power_plant_data.csv")</text>
+
+        <rect x="1480" y="765" width="130" height="25" rx="12" fill="#d5e8d4" stroke="#82b366"/>
+        <text x="1545" y="782" text-anchor="middle" font-size="11">DataFrame (500 rows)</text>
+
+        <line x1="1073" y1="790" x2="757" y2="790" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="915" y="782" text-anchor="middle" class="msg-text">Observation (JSON stats + sample)</text>
+
+        <!-- Divider -->
+        <line x1="360" y1="810" x2="2090" y2="810" stroke="#82b366" stroke-dasharray="2 4"/>
+
+
+        <!-- Iteration 3 (execute_python_code) -->
+        <rect x="375" y="820" width="150" height="25" class="iter-box"/>
+        <text x="385" y="838" font-size="12" font-weight="bold">Iter 3: execute_python_code</text>
+
+        <rect x="2053" y="830" width="14" height="60" class="activation" fill="#f8cecc" stroke="#b85450"/>
+        <line x1="757" y1="840" x2="2053" y2="840" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1400" y="832" text-anchor="middle" class="msg-text">2a. messages.create(...)</text>
+
+        <line x1="2053" y1="880" x2="757" y2="880" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1600" y="860" class="msg-text" fill="#1e40af" font-style="italic">"Thought: Execute analysis and plot efficiency."</text>
+        <text x="1600" y="875" class="msg-text-action">Action: execute_python_code | Action Input: {"code": "import pandas..."}</text>
+
+        <rect x="850" y="895" width="280" height="20" class="data-box"/>
+        <text x="860" y="909" font-size="11" font-family="monospace">_parse_react(raw_text) &rarr; {action: "execute_python_code"}</text>
+
+        <rect x="1073" y="920" width="14" height="80" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+        <line x1="757" y1="930" x2="1073" y2="930" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="915" y="922" text-anchor="middle" class="msg-text">4. Dispatch tool: execute_python_code({code})</text>
+
+        <rect x="1343" y="930" width="14" height="60" class="activation" fill="#e1e1e1" stroke="#666"/>
+        <line x1="1087" y1="940" x2="1343" y2="940" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1215" y="932" text-anchor="middle" class="msg-text">runner.execute(code)</text>
+
+        <rect x="1365" y="940" width="160" height="50" class="inner-box"/>
+        <text x="1370" y="955" font-size="10">1. STYLE_PREAMBLE (plt.show)</text>
+        <text x="1370" y="968" font-size="10">2. __FIGURE__ / __STATE__ postamble</text>
+        <text x="1370" y="981" font-size="10">3. subprocess.run(timeout=30s)</text>
+
+        <line x1="1343" y1="990" x2="1087" y2="990" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1215" y="982" text-anchor="middle" class="msg-text">AnalysisResult(success, stdout, figures=[fig_000])</text>
+
+        <!-- Figure Registration to Session/Artifacts -->
+        <line x1="1073" y1="1010" x2="520" y2="1010" class="msg-line" stroke="#d79b00" marker-end="url(#arrow-alt)"/>
+        <text x="796" y="1002" text-anchor="middle" class="msg-text-alt">session.register_figure("fig_000", b64_png)</text>
+        
+        <line x1="1073" y1="1010" x2="1840" y2="1010" class="msg-line" stroke="#d79b00" marker-end="url(#arrow-alt)"/>
+        <text x="1456" y="1002" text-anchor="middle" class="msg-text-alt">save figure to /outputs/</text>
+
+        <line x1="1073" y1="1030" x2="757" y2="1030" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="915" y="1022" text-anchor="middle" class="msg-text">Observation (JSON result + fig id)</text>
+
+        <!-- Divider -->
+        <line x1="360" y1="1045" x2="2090" y2="1045" stroke="#82b366" stroke-dasharray="2 4"/>
+
+        <!-- Iteration 4 (validate_physical_units - Fixed Bug) -->
+        <rect x="375" y="1055" width="150" height="25" class="iter-box"/>
+        <text x="385" y="1073" font-size="12" font-weight="bold">Iter 4: validate_physical_units</text>
+
+        <rect x="2053" y="1065" width="14" height="60" class="activation" fill="#f8cecc" stroke="#b85450"/>
+        <line x1="757" y1="1075" x2="2053" y2="1075" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1400" y="1067" text-anchor="middle" class="msg-text">2a. messages.create(...)</text>
+
+        <line x1="2053" y1="1115" x2="757" y2="1115" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1600" y="1095" class="msg-text" fill="#1e40af" font-style="italic">"Thought: Validate the efficiency value."</text>
+        <text x="1600" y="1110" class="msg-text-action">Action: validate_physical_units | Action Input: {"quantity": "thermal_efficiency"...}</text>
+
+        <rect x="850" y="1130" width="280" height="20" class="data-box"/>
+        <text x="860" y="1144" font-size="11" font-family="monospace">_parse_react(raw_text) &rarr; {action: "validate_physical_units"}</text>
+
+        <rect x="1073" y="1150" width="14" height="40" class="activation" fill="#ffe6cc" stroke="#d79b00"/>
+        <line x1="757" y1="1160" x2="1073" y2="1160" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="915" y="1152" text-anchor="middle" class="msg-text">4. Dispatch tool: validate_physical_units()</text>
+
+        <rect x="1100" y="1155" width="150" height="30" class="inner-box"/>
+        <text x="1110" y="1175" font-size="11">pint.Quantity + DOMAIN_RANGES [0, 100]</text>
+
+        <!-- Log unit validation to Session -->
+        <line x1="1073" y1="1185" x2="520" y2="1185" class="msg-line" stroke="#16a34a" marker-end="url(#arrow)"/>
+        <text x="796" y="1177" text-anchor="middle" class="msg-text" font-weight="bold" fill="#16a34a">session.log_unit_validation(PhysicalUnit)</text>
+
+        <line x1="1073" y1="1205" x2="757" y2="1205" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="915" y="1197" text-anchor="middle" class="msg-text">Observation (validation JSON: is_valid=True)</text>
+
+        <!-- Divider -->
+        <line x1="360" y1="1215" x2="2090" y2="1215" stroke="#82b366" stroke-dasharray="2 4"/>
+
+        <!-- Iteration 5 (Final Answer) -->
+        <rect x="375" y="1225" width="150" height="25" class="iter-box"/>
+        <text x="385" y="1243" font-size="12" font-weight="bold">Iter 5: Final Answer</text>
+
+        <line x1="757" y1="1240" x2="2053" y2="1240" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="1400" y="1232" text-anchor="middle" class="msg-text">2a. messages.create(...)</text>
+
+        <line x1="2053" y1="1270" x2="757" y2="1270" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="1600" y="1255" class="msg-text" fill="#1e40af" font-style="italic">"Thought: I have all data, figures, and validation."</text>
+        <text x="1600" y="1270" class="msg-text" fill="#b85450" font-weight="bold">Final Answer: The mean thermal efficiency is 36.73%.</text>
+
+        <rect x="850" y="1285" width="280" height="20" class="data-box"/>
+        <text x="860" y="1299" font-size="11" font-family="monospace">_parse_react(raw_text) &rarr; {type: "final_answer"}</text>
+        
+        <rect x="850" y="1310" width="280" height="20" class="data-box" fill="#f8cecc"/>
+        <text x="990" y="1324" text-anchor="middle" font-size="12" font-weight="bold" fill="#b85450">EXIT LOOP &rarr; return final_answer string</text>
+
+        <!-- =================== POST REACT LOOP =================== -->
+
+        <line x1="743" y1="1350" x2="313" y2="1350" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="528" y="1342" text-anchor="middle" class="msg-text" font-weight="bold">Final Answer string returned</text>
+
+        <line x1="313" y1="1370" x2="520" y2="1370" class="msg-line" marker-end="url(#arrow)"/>
+        <text x="416" y="1362" text-anchor="middle" class="msg-text">3. analysis_session_store.save(session)</text>
+
+        <rect x="180" y="1380" width="200" height="50" class="inner-box"/>
+        <text x="190" y="1395" font-size="11" font-weight="bold">Build AnalysisResponse {</text>
+        <text x="200" y="1410" font-size="11">response, session_id, react_trace[],</text>
+        <text x="200" y="1425" font-size="11">figures[], unit_validations[] }</text>
+
+        <line x1="313" y1="1445" x2="120" y2="1445" class="msg-line-dashed" marker-end="url(#arrow)"/>
+        <text x="216" y="1437" text-anchor="middle" class="msg-text" font-weight="bold">⑥ HTTP 200 JSON (AnalysisResponse)</text>
+
+        <!-- Native tool use note -->
+        <rect x="2100" y="460" width="85" height="70" class="note-box" fill="#fffaf5" stroke="#d79b00"/>
+        <text x="2105" y="475" font-size="10" fill="#b85450">Text-based protocol</text>
+        <text x="2105" y="490" font-size="10" fill="#b85450">— NO tools= param.</text>
+        <text x="2105" y="505" font-size="10" fill="#b85450">System prompt</text>
+        <text x="2105" y="520" font-size="10" fill="#b85450">contains 16 tools.</text>
+
+    </svg>
+</div>
+
+</body>
+</html>

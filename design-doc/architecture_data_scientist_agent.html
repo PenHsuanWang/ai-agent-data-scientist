@@ -58,7 +58,7 @@
     .canvas {
       position: relative;
       width: 1700px;
-      height: 850px;
+      height: 980px;
       background:
         radial-gradient(circle at 15% 6%, #e9f2ff 0, transparent 35%),
         radial-gradient(circle at 85% 0%, #f0f8ff 0, transparent 30%),
@@ -76,27 +76,47 @@
 
     .card h3 {
       margin: 0 0 10px;
-      font-size: 28px;
+      font-size: 26px;
       line-height: 1.2;
     }
 
     .card h4 {
-      margin: 0 0 8px;
-      font-size: 20px;
+      margin: 0 0 6px;
+      font-size: 18px;
       line-height: 1.2;
     }
 
     .small {
-      font-size: 17px;
+      font-size: 15px;
       color: var(--muted);
-      line-height: 1.3;
+      line-height: 1.35;
+    }
+
+    .small code {
+      background: #f1f5f9;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-size: 13px;
+      color: #0f172a;
+    }
+
+    .warn {
+      font-size: 14px;
+      font-weight: 700;
+      color: #b45309;
+      background: #fef9ee;
+      border: 1px solid #fcd34d;
+      border-radius: 6px;
+      padding: 3px 7px;
+      margin-top: 4px;
+      display: inline-block;
     }
 
     .list {
       margin: 8px 0 0 0;
       padding: 0 0 0 18px;
-      font-size: 17px;
-      line-height: 1.35;
+      font-size: 15px;
+      line-height: 1.4;
     }
 
     .list li { margin-bottom: 5px; }
@@ -104,113 +124,127 @@
     .user-note {
       position: absolute;
       left: 22px;
-      top: 248px;
-      width: 180px;
-      padding: 14px;
+      top: 240px;
+      width: 178px;
+      padding: 12px;
       border: 2px solid var(--blue);
       border-radius: 14px;
       background: #f4f9ff;
-      font-size: 22px;
+      font-size: 19px;
       line-height: 1.25;
     }
 
     .user-icon {
       position: absolute;
       left: 30px;
-      top: 468px;
+      top: 470px;
       width: 150px;
       text-align: center;
       color: #295188;
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 700;
     }
     .user-icon .emoji {
-      font-size: 62px;
+      font-size: 58px;
       display: block;
       margin-bottom: 4px;
     }
 
+    /* ── card positions ──────────────────────────────────────── */
+
     .claude {
-      left: 700px;
-      top: 18px;
-      width: 340px;
-      height: 130px;
+      left: 690px;
+      top: 14px;
+      width: 370px;
+      height: 148px;
       border-color: var(--blue);
       background: #f5f9ff;
     }
 
     .fastapi {
-      left: 220px;
-      top: 200px;
-      width: 360px;
-      height: 430px;
+      left: 218px;
+      top: 195px;
+      width: 368px;
+      height: 370px;
       border-color: var(--green);
       background: #f6fff9;
     }
 
+    /* AnalysisSession sits directly below FastAPI */
+    .session-agg {
+      left: 218px;
+      top: 580px;
+      width: 368px;
+      height: 265px;
+      border-color: #7c3aed;
+      background: #faf5ff;
+    }
+
     .runtime {
-      left: 630px;
-      top: 165px;
-      width: 420px;
-      height: 500px;
+      left: 628px;
+      top: 175px;
+      width: 435px;
+      height: 610px;
       border-color: var(--orange);
       background: #fffaf5;
     }
 
     .tools {
-      left: 1090px;
-      top: 190px;
-      width: 310px;
-      height: 420px;
+      left: 1095px;
+      top: 185px;
+      width: 318px;
+      height: 595px;
       border-color: var(--purple);
       background: #faf6ff;
     }
 
     .storage {
-      left: 1420px;
-      top: 210px;
-      width: 255px;
-      height: 380px;
+      left: 1430px;
+      top: 205px;
+      width: 252px;
+      height: 370px;
       border-color: var(--blue);
       background: #f5f9ff;
     }
 
     .exec {
-      left: 1090px;
-      top: 625px;
-      width: 585px;
-      height: 165px;
+      left: 1095px;
+      top: 798px;
+      width: 587px;
+      height: 162px;
       border-color: var(--teal);
       background: #f4fffe;
     }
 
+    /* ── sub-components ─────────────────────────────────────── */
+
     .sub-card {
       border: 1.8px solid #cfd8e8;
-      border-radius: 11px;
-      padding: 10px 12px;
-      margin-top: 10px;
+      border-radius: 10px;
+      padding: 8px 11px;
+      margin-top: 9px;
       background: #fff;
     }
 
     .sub-card h5 {
-      margin: 0 0 6px;
-      font-size: 18px;
+      margin: 0 0 5px;
+      font-size: 15px;
+      color: #1e3a8a;
     }
 
     .step {
       border: 1.5px solid #f3c89d;
       background: #fff;
-      border-radius: 10px;
-      padding: 9px 10px;
-      margin-top: 8px;
-      font-size: 16px;
-      line-height: 1.25;
+      border-radius: 9px;
+      padding: 8px 10px;
+      margin-top: 7px;
+      font-size: 14px;
+      line-height: 1.3;
     }
 
-    .step strong {
-      color: #b45309;
-      font-size: 17px;
-    }
+    .step strong { color: #b45309; }
+
+    /* ── flow section ───────────────────────────────────────── */
 
     .flow {
       border-top: 1px dashed #d6deeb;
@@ -220,13 +254,13 @@
 
     .flow h3 {
       margin: 0 0 10px;
-      font-size: 24px;
+      font-size: 22px;
       color: #1e3a8a;
     }
 
     .row {
       display: flex;
-      gap: 10px;
+      gap: 9px;
       align-items: stretch;
       margin-bottom: 10px;
     }
@@ -234,25 +268,25 @@
     .flow-item {
       flex: 1;
       border: 1.8px solid #d1d8e6;
-      border-radius: 12px;
+      border-radius: 11px;
       padding: 10px 12px;
       background: #fff;
-      min-height: 85px;
-      font-size: 15px;
-      line-height: 1.25;
+      min-height: 90px;
+      font-size: 14px;
+      line-height: 1.3;
     }
 
     .num {
       display: inline-flex;
-      width: 26px;
-      height: 26px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      margin-right: 8px;
+      margin-right: 6px;
       color: #fff;
-      font-size: 14px;
+      font-size: 13px;
     }
 
     .n1 { background: #16a34a; }
@@ -265,33 +299,38 @@
 
     .foot {
       display: grid;
-      grid-template-columns: 1.35fr 1fr;
+      grid-template-columns: 1.4fr 1fr;
       gap: 12px;
       margin-top: 10px;
     }
     .panel {
       border: 1.8px solid #d1d8e6;
-      border-radius: 12px;
-      padding: 10px 12px;
+      border-radius: 11px;
+      padding: 10px 13px;
       background: #fff;
-      font-size: 15px;
-      line-height: 1.3;
+      font-size: 14px;
+      line-height: 1.35;
     }
 
     .stack-tags {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
+      gap: 7px;
+      margin-top: 7px;
     }
     .tag {
       border: 1.5px solid #c7d2fe;
       color: #1e3a8a;
       background: #eef2ff;
       border-radius: 999px;
-      padding: 6px 10px;
-      font-size: 14px;
+      padding: 5px 10px;
+      font-size: 13px;
       font-weight: 600;
+    }
+    .tag-teal {
+      border-color: #99f6e4;
+      color: #0f4840;
+      background: #f0fffe;
     }
 
     svg.arrows {
@@ -301,7 +340,7 @@
     }
 
     .lbl {
-      font-size: 16px;
+      font-size: 14px;
       fill: #334155;
       font-weight: 600;
     }
@@ -311,85 +350,183 @@
   <div class="page">
     <div class="header">
       <h1>AI Agent Architecture v2</h1>
-      <p>Data Scientist Agent (FastAPI + Anthropic SDK + ReAct + Python Execution)</p>
+      <p>Data Scientist Agent — FastAPI + AsyncAnthropic + Text-Based ReAct Loop + 16 Tools (3 Groups) + pint Physical Validation</p>
     </div>
 
     <div class="canvas">
-      <div class="user-note">Please analyze <strong>turbine_data.csv</strong>, validate units, and export a notebook.</div>
+
+      <!-- ── User ─────────────────────────────────────────── -->
+      <div class="user-note">
+        "Analyze <strong>power_plant_data.csv</strong>, compute thermal efficiency, validate units, export a notebook."
+      </div>
       <div class="user-icon"><span class="emoji">🧑‍🔬</span>User</div>
 
+      <!-- ── Claude API ──────────────────────────────────── -->
       <div class="card claude">
-        <h3>Claude API (Anthropic)</h3>
-        <div class="small">Model: <strong>claude-sonnet-4-6</strong></div>
-        <div class="small">messages.create() + tool orchestration</div>
+        <h3>☁️ Claude API (Anthropic)</h3>
+        <div class="small">Model: <code>claude-sonnet-4-6</code> via <code>AsyncAnthropic</code></div>
+        <div class="small" style="margin-top:5px"><code>_client.messages.create(model, max_tokens, system, messages)</code></div>
+        <div class="warn">Text-based ReAct — NO <code>tools=</code> parameter</div>
+        <div class="small" style="margin-top:5px">Returns plain text → parsed as <em>Thought / Action / Action Input</em> OR <em>Final Answer</em></div>
       </div>
 
+      <!-- ── FastAPI Backend ────────────────────────────── -->
       <div class="card fastapi">
-        <h3>FastAPI Backend</h3>
+        <h3>⚡ FastAPI Backend</h3>
+
         <div class="sub-card">
-          <h4>Routes</h4>
-          <div class="small"><strong>Unchanged MVP:</strong> POST /api/v1/chat</div>
-          <div class="small"><strong>New:</strong> POST /api/v1/analysis/chat</div>
-          <div class="small">GET /analysis/{session}/figures/{id}</div>
-          <div class="small">GET /analysis/{session}/notebook</div>
-          <div class="small">GET /api/v1/datasets + /schema</div>
+          <h5>A. Analysis Router — prefix: <code>/api/v1/analysis</code></h5>
+          <div class="small"><strong>POST</strong> /api/v1/analysis/chat → <code>analysis_chat()</code></div>
+          <div class="small"><strong>GET</strong> /api/v1/analysis/{session_id}/figures/{figure_id} → PNG</div>
+          <div class="small"><strong>GET</strong> /api/v1/analysis/{session_id}/notebook → .ipynb download</div>
         </div>
+
         <div class="sub-card">
-          <h4>Session Store</h4>
-          <div class="small">InMemorySessionStore (memory.py)</div>
-          <div class="small">AgentSession + AnalysisSession</div>
-          <div class="small">get_or_create_analysis()</div>
+          <h5>B. Datasets Router — prefix: <code>/api/v1/datasets</code></h5>
+          <div class="small"><strong>GET</strong> /api/v1/datasets → list all dataset files</div>
+          <div class="small"><strong>GET</strong> /api/v1/datasets/{name}/schema → schema + stats</div>
+        </div>
+
+        <div class="sub-card">
+          <h5>Session Store (<code>memory.py</code>)</h5>
+          <div class="small"><code>AnalysisSessionStore</code>: <code>session_id → AnalysisSession</code></div>
+          <div class="small">Methods: <code>get_or_create(session_id)</code>, <code>get(session_id)</code>, <code>save(session)</code></div>
+          <div class="small" style="margin-top:3px; color:#64748b">Also: <code>InMemorySessionStore</code> for base <code>AgentSession</code></div>
         </div>
       </div>
 
+      <!-- ── AnalysisSession aggregate root ──────────────── -->
+      <div class="card session-agg">
+        <h4>📦 AnalysisSession (aggregate root) — <code>analysis_models.py</code></h4>
+        <div class="small" style="margin-top:4px">Extends <code>AgentSession</code> (inherits <code>messages[]</code> + Anthropic-format helpers)</div>
+        <div class="small" style="margin-top:6px">
+          <code>messages[]</code> — full Anthropic API message history<br>
+          <code>react_trace[]</code> — Thought / Action / Observation dicts<br>
+          <code>datasets_loaded{}</code> — <code>file_name → DatasetMeta</code><br>
+          <code>figures{}</code> — <code>figure_id → base64 PNG</code><br>
+          <code>unit_context[]</code> — <code>PhysicalUnit</code> validation results<br>
+          <code>notebook_cells[]</code> — <code>NotebookCell</code> list<br>
+          <code>code_runner_state{}</code> — opaque runner state dict<br>
+          <code>notebook_path</code> — path to exported .ipynb or <code>None</code>
+        </div>
+      </div>
+
+      <!-- ── ReAct Runtime ──────────────────────────────── -->
       <div class="card runtime">
-        <h3>Agent Runtime (DataScienceAgentService)</h3>
-        <div class="small">Explicit ReAct loop with auditable trace</div>
-        <div class="step"><strong>1.</strong> Build system prompt with PhysicalContextInjector (domain docs + datasets).</div>
-        <div class="step"><strong>2.</strong> Call Claude with messages + tool definitions.</div>
-        <div class="step"><strong>3.</strong> Parse <em>Thought / Action / Action Input</em> or <em>Final Answer</em>.</div>
-        <div class="step"><strong>4.</strong> Dispatch tool, append Observation, continue loop.</div>
-        <div class="step"><strong>5.</strong> Validate physical units + magnitude, then return final response.</div>
+        <h3>🔄 ReAct Agent Loop (<code>DataScienceAgentService</code>)</h3>
+        <div class="small">Text-based Thought → Action → Observation. <strong>NOT</strong> native tool-use API.</div>
+
+        <div class="step">
+          <strong>1.</strong> <code>_build_system_prompt()</code> — assembles tool summary for all 16 tools
+          + 12 numbered workflow &amp; code-generation rules.
+        </div>
+        <div class="step">
+          <strong>2.</strong> <code>_client.messages.create(model, max_tokens, system=prompt, messages=session.messages)</code>
+          — sends full message history. <em>No <code>tools=</code> parameter.</em>
+        </div>
+        <div class="step">
+          <strong>3.</strong> <code>_parse_react(raw_text)</code> — regex extracts
+          <em>Thought / Action / Action Input</em> or <em>Final Answer</em>.
+          Returns <code>{"type": "action"|"final_answer"|"parse_error", ...}</code>.
+        </div>
+        <div class="step">
+          <strong>4.</strong> On <code>"parse_error"</code>: if count &lt; 3 → inject correction prompt and retry;
+          if count ≥ 3 → raise <code>ReActLoopError</code>.
+        </div>
+        <div class="step">
+          <strong>5.</strong> On <code>"action"</code>: <code>tool_registry[action_name](action_input)</code>
+          → <code>observation: str</code>. All tools return <code>str</code>, never raise.
+        </div>
+        <div class="step">
+          <strong>6.</strong> <code>session.add_assistant_message(thought+action)</code> +
+          <code>session.add_user_message("Observation: ...")</code>. Loop back to step 2.
+        </div>
+        <div class="step">
+          <strong>7.</strong> On <code>"final_answer"</code>: exit loop, return answer.
+          Hard limit: <code>MAX_REACT_ITERATIONS = 20</code>. Raises <code>ReActLoopError</code> if exceeded.
+        </div>
       </div>
 
+      <!-- ── Python Function Toolbox ────────────────────── -->
       <div class="card tools">
-        <h3>Tools (Python Functions)</h3>
+        <h3>🐍 Python Function Toolbox</h3>
+        <div class="small" style="margin-top:-4px">16 tools · 3 groups · all return <code>str</code> · never raise</div>
+
         <div class="sub-card">
-          <h5>Knowledge</h5>
-          <div class="small">list/read/search domain docs, inspect datasets</div>
+          <h5>Group A — Knowledge Tools (7) · <code>knowledge_tools.py</code></h5>
+          <div class="small">
+            <code>list_domain_documents()</code><br>
+            <code>read_domain_document(file_name)</code><br>
+            <code>search_domain_knowledge(query, top_k)</code><br>
+            <code>get_coding_standards()</code><br>
+            <code>list_datasets()</code><br>
+            <code>inspect_dataset(file_name)</code><br>
+            <code>describe_columns(file_name, columns)</code>
+          </div>
+          <div class="small" style="margin-top:4px; color:#64748b">Pure functions · read-only · <code>_safe_resolve()</code> path guard</div>
         </div>
+
         <div class="sub-card">
-          <h5>Analysis</h5>
-          <div class="small">execute_python_code, list/get figures</div>
+          <h5>Group B — Execution Tools (6) · <code>data_tools.py</code></h5>
+          <div class="small">
+            <code>execute_python_code(code)</code><br>
+            <code>get_execution_variables()</code><br>
+            <code>get_figure(figure_id)</code><br>
+            <code>list_figures()</code><br>
+            <code>export_notebook(title)</code><br>
+            <code>save_figure(figure_id, filename)</code>
+          </div>
+          <div class="small" style="margin-top:4px; color:#64748b">Stateful — mutate <code>AnalysisSession</code> · delegate to <code>CodeRunner</code></div>
         </div>
+
         <div class="sub-card">
-          <h5>Validation + Output</h5>
-          <div class="small">validate_physical_units, convert_units, export_notebook</div>
+          <h5>Group C — Validation Tools (3) · <code>unit_registry.py</code></h5>
+          <div class="small">
+            <code>validate_physical_units(quantity, value, unit)</code><br>
+            <code>convert_units(value, from_unit, to_unit)</code><br>
+            <code>check_magnitude(quantity, value, unit)</code>
+          </div>
+          <div class="small" style="margin-top:4px; color:#64748b">pint-backed · logs result to <code>session.unit_context</code></div>
         </div>
       </div>
 
+      <!-- ── Local Filesystem ───────────────────────────── -->
       <div class="card storage">
-        <h3>Local Filesystem</h3>
+        <h3>🗂 Local Filesystem</h3>
         <ul class="list">
-          <li><strong>/data/domain_docs/</strong></li>
-          <li><strong>/data/datasets/</strong></li>
-          <li><strong>/outputs/figures/</strong></li>
-          <li><strong>/outputs/notebooks/</strong></li>
+          <li>
+            <strong>data/domain_docs/</strong><br>
+            <span style="font-size:13px;color:#64748b">coding_standards.md<br>(read by Group A tools)</span>
+          </li>
+          <li>
+            <strong>data/datasets/</strong><br>
+            <span style="font-size:13px;color:#64748b">CSV · Parquet · Excel · HDF5 · JSON</span>
+          </li>
+          <li>
+            <strong>outputs/figures/</strong><br>
+            <span style="font-size:13px;color:#64748b">saved PNG plots</span>
+          </li>
+          <li>
+            <strong>outputs/notebooks/</strong><br>
+            <span style="font-size:13px;color:#64748b">exported .ipynb files</span>
+          </li>
         </ul>
       </div>
 
+      <!-- ── Execution & Validation Infrastructure ─────── -->
       <div class="card exec">
-        <h3>Execution & Validation Infrastructure</h3>
-        <div class="small">Pluggable backends selected by CODE_EXECUTION_BACKEND</div>
-        <div class="stack-tags">
-          <span class="tag">SubprocessCodeRunner</span>
-          <span class="tag">JupyterKernelManager</span>
-          <span class="tag">Anthropic Code Execution Tool</span>
-          <span class="tag">pint UnitRegistry</span>
+        <h3>⚙️ Code Execution &amp; Validation Infrastructure</h3>
+        <div class="small"><code>CodeRunnerFactory.create(session_id)</code> — picks backend from <code>CODE_EXECUTION_BACKEND</code> env setting</div>
+        <div class="stack-tags" style="margin-top:8px">
+          <span class="tag tag-teal">SubprocessCodeRunner (default)<br><span style="font-weight:400;font-size:12px">isolated subprocess · STYLE_PREAMBLE · plt.show()→PNG · __FIGURES__/__STATE__ sentinels · stateless</span></span>
+          <span class="tag tag-teal">JupyterKernelManager (optional)<br><span style="font-weight:400;font-size:12px">persistent python3 kernel · vars persist · requires jupyter_client + ipykernel</span></span>
+          <span class="tag">pint UnitRegistry<br><span style="font-weight:400;font-size:12px">DOMAIN_RANGES (15 quantities)</span></span>
+          <span class="tag">notebook_exporter.py<br><span style="font-weight:400;font-size:12px">nbformat · export_notebook() · save_figure()</span></span>
         </div>
       </div>
 
-      <svg class="arrows" viewBox="0 0 1700 850" preserveAspectRatio="none" aria-hidden="true">
+      <!-- ── SVG Arrows ─────────────────────────────────── -->
+      <svg class="arrows" viewBox="0 0 1700 980" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path>
@@ -397,86 +534,131 @@
           <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"></path>
           </marker>
+          <marker id="arrTeal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#0f766e"></path>
+          </marker>
         </defs>
 
-        <!-- user -> fastapi -->
-        <line x1="180" y1="500" x2="220" y2="500" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="198" y="488" class="lbl">request</text>
+        <!-- user → fastapi (POST /api/v1/analysis/chat) -->
+        <line x1="178" y1="510" x2="218" y2="510" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="130" y="503" class="lbl">POST /chat</text>
 
-        <!-- fastapi -> runtime -->
-        <line x1="580" y1="385" x2="630" y2="385" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="587" y="368" class="lbl">messages + tools</text>
+        <!-- fastapi → user (AnalysisResponse) -->
+        <line x1="218" y1="545" x2="178" y2="545" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="104" y="562" class="lbl">AnalysisResponse</text>
 
-        <!-- runtime -> fastapi -->
-        <line x1="630" y1="470" x2="580" y2="470" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="586" y="492" class="lbl">final response</text>
+        <!-- fastapi → runtime (.run(session, message)) -->
+        <line x1="586" y1="390" x2="628" y2="390" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="586" y="374" class="lbl">.run(session, message)</text>
 
-        <!-- runtime -> claude -->
-        <line x1="835" y1="165" x2="835" y2="148" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrBlue)"/>
-        <text x="720" y="154" class="lbl" fill="#1d4ed8">messages.create()</text>
+        <!-- runtime → fastapi (final answer str) -->
+        <line x1="628" y1="440" x2="586" y2="440" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="590" y="460" class="lbl">final answer str</text>
 
-        <!-- claude -> runtime -->
-        <line x1="905" y1="148" x2="905" y2="165" stroke="#2563eb" stroke-dasharray="7 6" stroke-width="2.5" marker-end="url(#arrBlue)"/>
-        <text x="913" y="160" class="lbl" fill="#1d4ed8">text + action hints</text>
+        <!-- runtime → claude (messages.create — up) -->
+        <line x1="840" y1="175" x2="840" y2="162" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+        <text x="684" y="160" class="lbl" fill="#1d4ed8">messages.create() text-only</text>
 
-        <!-- runtime -> tools -->
-        <line x1="1050" y1="395" x2="1090" y2="395" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="1042" y="377" class="lbl">tool call</text>
+        <!-- claude → runtime (Thought/Action text — down) -->
+        <line x1="920" y1="162" x2="920" y2="175" stroke="#2563eb" stroke-dasharray="7 5" stroke-width="2.5" marker-end="url(#arrBlue)"/>
+        <text x="930" y="172" class="lbl" fill="#1d4ed8">Thought/Action/Final Answer</text>
 
-        <!-- tools -> runtime -->
-        <line x1="1090" y1="450" x2="1050" y2="450" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="1058" y="470" class="lbl">observation</text>
+        <!-- runtime → tools (tool call dispatch) -->
+        <line x1="1063" y1="410" x2="1095" y2="410" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1048" y="396" class="lbl">tool_registry[name](input)</text>
 
-        <!-- tools -> storage -->
-        <line x1="1400" y1="350" x2="1420" y2="350" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
-        <line x1="1420" y1="430" x2="1400" y2="430" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="1398" y="338" class="lbl">read/write</text>
+        <!-- tools → runtime (observation str) -->
+        <line x1="1095" y1="460" x2="1063" y2="460" stroke="#334155" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1064" y="478" class="lbl">observation str</text>
 
-        <!-- runtime -> exec -->
-        <line x1="940" y1="665" x2="1090" y2="665" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arr)"/>
-        <text x="946" y="648" class="lbl" fill="#0f766e">execute + validate</text>
+        <!-- tools → storage (read domain docs / datasets) -->
+        <line x1="1413" y1="355" x2="1430" y2="355" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1386" y="342" class="lbl">read</text>
 
-        <!-- exec -> tools -->
-        <line x1="1230" y1="625" x2="1230" y2="610" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arr)"/>
+        <!-- storage → tools (write figures / notebooks) -->
+        <line x1="1430" y1="430" x2="1413" y2="430" stroke="#334155" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arr)"/>
+        <text x="1383" y="448" class="lbl">save PNG / .ipynb</text>
+
+        <!-- tools (Group B) → exec backend -->
+        <line x1="1254" y1="780" x2="1254" y2="798" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arrTeal)"/>
+        <text x="1150" y="793" class="lbl" fill="#0f766e">runner.execute(code)</text>
+
+        <!-- exec → tools (figures b64 returned) -->
+        <line x1="1310" y1="798" x2="1310" y2="780" stroke="#0f766e" stroke-dasharray="6 5" stroke-width="2.5" marker-end="url(#arrTeal)"/>
+        <text x="1316" y="793" class="lbl" fill="#0f766e">AnalysisResult (stdout, figures)</text>
       </svg>
-    </div>
+    </div><!-- /.canvas -->
 
+    <!-- ── Flow of Operations ─────────────────────────────── -->
     <div class="flow">
       <h3>Flow (Order of Operations)</h3>
       <div class="row">
-        <div class="flow-item"><span class="num n1">1</span>User sends request to <strong>/api/v1/analysis/chat</strong>.</div>
-        <div class="flow-item"><span class="num n2">2</span>Backend loads/creates AnalysisSession and prepares context.</div>
-        <div class="flow-item"><span class="num n3">3</span>Agent loop calls Claude and receives next action/final answer.</div>
-        <div class="flow-item"><span class="num n4">4</span>Tool dispatch executes Python/data/knowledge actions.</div>
-        <div class="flow-item"><span class="num n5">5</span>Validation layer enforces units and physical plausibility.</div>
-        <div class="flow-item"><span class="num n6">6</span>Agent returns answer + react trace + figures + notebook state.</div>
-        <div class="flow-item"><span class="num n7">7</span>Client fetches figure PNG / notebook via analysis endpoints.</div>
+        <div class="flow-item">
+          <span class="num n1">1</span>
+          User sends <code>POST /api/v1/analysis/chat</code> with <code>{message, session_id}</code>.
+        </div>
+        <div class="flow-item">
+          <span class="num n2">2</span>
+          <code>AnalysisSessionStore.get_or_create(session_id)</code> returns existing or new <code>AnalysisSession</code>.
+          <code>DataScienceAgentService.run(session, message)</code> is called.
+        </div>
+        <div class="flow-item">
+          <span class="num n3">3</span>
+          ReAct loop: <code>_build_system_prompt()</code> (16-tool summary + 12 rules) →
+          <code>_client.messages.create()</code> with full session message history. No <code>tools=</code>.
+        </div>
+        <div class="flow-item">
+          <span class="num n4">4</span>
+          <code>_parse_react(raw_text)</code> extracts <em>Thought / Action / Action Input</em>.
+          <code>tool_registry[action_name](action_input)</code> dispatches to one of 16 tools.
+          Observation appended; loop continues (max 20 iterations).
+        </div>
+        <div class="flow-item">
+          <span class="num n5">5</span>
+          Physical validation tools (<code>validate_physical_units</code>, <code>check_magnitude</code>)
+          are called by Claude as needed; results logged to <code>session.unit_context</code>.
+        </div>
+        <div class="flow-item">
+          <span class="num n6">6</span>
+          On <em>Final Answer</em>, loop exits. Returns <code>AnalysisResponse</code>
+          (response, session_id, react_trace, figures, unit_validations, iterations_used, model, status).
+        </div>
+        <div class="flow-item">
+          <span class="num n7">7</span>
+          Client retrieves artifacts: <code>GET /api/v1/analysis/{session_id}/figures/{figure_id}</code> → PNG;
+          <code>GET /api/v1/analysis/{session_id}/notebook</code> → .ipynb.
+        </div>
       </div>
 
       <div class="foot">
         <div class="panel">
-          <strong>Design Highlights</strong><br />
-          • Built on top of MVP: existing <code>/api/v1/chat</code> and <code>AgentService</code> remain unchanged.<br />
-          • Explicit ReAct loop for auditability and controlled multi-step analysis.<br />
-          • Pluggable execution backends (subprocess / jupyter / anthropic) selected by config.<br />
-          • Physical safety checks (units + ranges + hard laws) before final answer.<br />
-          • Secure local file access using path-resolution guards.
+          <strong>Design Highlights</strong><br>
+          • <strong>Text-based ReAct</strong>: Thought → Action → Observation — NOT native tool-use API (<code>tools=</code> never passed to Claude).<br>
+          • <strong>Tools never raise</strong>: all 16 tools return <code>str</code>; errors returned as <code>"Error: ..."</code> strings; Claude self-corrects.<br>
+          • <strong>Path traversal protection</strong>: all file access via <code>_safe_resolve(base_dir, file_name)</code>.<br>
+          • <strong>Physical law enforcement</strong>: pint <code>DOMAIN_RANGES</code> (15 quantities) rejects e.g. efficiency &gt; 100%.<br>
+          • <strong>plt.show() patched</strong>: figures captured as base64 PNG via <code>__FIGURES__</code> sentinel in subprocess stdout.<br>
+          • <strong>Full audit trail</strong>: <code>react_trace</code> (Thought/Action/Observation) returned in every <code>AnalysisResponse</code>.<br>
+          • <strong>Pluggable backends</strong>: <code>SubprocessCodeRunner</code> (default, stateless) or <code>JupyterKernelManager</code> (persistent) — set via <code>CODE_EXECUTION_BACKEND</code>.<br>
+          • <strong>Notebook export</strong>: any session exportable as .ipynb via <code>export_notebook(title)</code> tool.
         </div>
         <div class="panel">
           <strong>Tech Stack</strong>
           <div class="stack-tags">
-            <span class="tag">FastAPI</span>
-            <span class="tag">Anthropic Python SDK</span>
-            <span class="tag">Claude Sonnet 4.6</span>
+            <span class="tag">FastAPI (Web Framework)</span>
+            <span class="tag">Anthropic Python SDK (AsyncAnthropic)</span>
+            <span class="tag">Claude Sonnet 4.6 (claude-sonnet-4-6)</span>
+            <span class="tag">pint (Unit Validation)</span>
             <span class="tag">pandas / numpy</span>
             <span class="tag">matplotlib / seaborn</span>
-            <span class="tag">jupyter_client + nbformat</span>
-            <span class="tag">pint</span>
-            <span class="tag">Pydantic v2</span>
+            <span class="tag">nbformat (Notebook Export)</span>
+            <span class="tag">pydantic-settings (.env config)</span>
+            <span class="tag">jupyter_client + ipykernel (optional)</span>
           </div>
         </div>
       </div>
-    </div>
-  </div>
+    </div><!-- /.flow -->
+
+  </div><!-- /.page -->
 </body>
 </html>
