@@ -887,3 +887,170 @@ class CodeRunnerFactory:
         else:
             raise ValueError(f"Unknown backend: {backend!r}")
 ```
+
+---
+
+## 9. Resource Limits, Kernel Recovery, and Backend Validation
+
+> **Context:** This section addresses Gaps 8, 9, and 13 from the exception-handling audit.  
+> Full designs are in `09_exception_handling_design.md §§3.3, 3.4`.
+
+### 9.1 Subprocess Resource Limits (`SubprocessCodeRunner`)
+
+The current subprocess runner relies solely on a wall-clock timeout (`subprocess.run(...,
+timeout=30)`). This does not cap memory usage — a code snippet that allocates a large
+NumPy array can OOM the host process.
+
+**Required: `setrlimit` wrapper before `subprocess.run()`**
+
+```python
+import resource, os
+
+def _apply_resource_limits() -> None:
+    """Called inside the subprocess via preexec_fn."""
+    # Virtual memory: 2 GB
+    resource.setrlimit(resource.RLIMIT_AS, (2 * 1024**3, 2 * 1024**3))
+    # CPU time: 60 seconds
+    resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+    # Open file descriptors: 64
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+
+# Usage:
+result = subprocess.run(
+    ["python", "-c", wrapper],
+    capture_output=True,
+    text=True,
+    timeout=settings.code_execution_timeout_seconds,
+    preexec_fn=_apply_resource_limits,   # ← NEW
+)
+```
+
+**Resource limit table:**
+
+| Resource | Limit | Rationale |
+|---|---|---|
+| Virtual memory (`RLIMIT_AS`) | 2 GB | Prevents OOM kill of host process |
+| CPU time (`RLIMIT_CPU`) | 60 s | Hard wall; complements wall-clock timeout |
+| Open file descriptors (`RLIMIT_NOFILE`) | 64 | Prevents FD exhaustion attacks |
+| Max processes (`RLIMIT_NPROC`) | 32 | Prevents fork bomb inside user code |
+
+> Note: `preexec_fn` is Unix-only. On Windows, use Job Objects instead.
+
+### 9.2 Jupyter Kernel Health Check and Restart (`JupyterKernelManager`)
+
+A Jupyter kernel can crash silently (OOM, uncaught C-extension segfault). The current
+`execute()` method calls `_ensure_kernel_started()` but never verifies the kernel is
+still alive before sending a new execution request.
+
+**Required: Kernel liveness probe and restart FSM**
+
+```
+execute(code)
+     │
+     ▼
+_probe_kernel_alive()
+     │
+     ├── ALIVE ────────────────────────────────────────►  send execution request
+     │                                                             │
+     └── DEAD / TIMEOUT                                           ▼
+              │                                          read iopub until idle
+              ▼                                                    │
+      _restart_kernel()                              ┌─── success ─┘
+              │                                      │
+              ├── success ──► retry execution once   └─── kernel dies again
+              │                                              │
+              └── restart fails                             ▼
+                      │                          raise KernelCrashError
+                      ▼
+              raise KernelCrashError
+```
+
+**`_probe_kernel_alive()` implementation sketch:**
+
+```python
+def _probe_kernel_alive(self) -> bool:
+    """Returns True if the kernel responds to a ping within 2 seconds."""
+    if self._km is None or not self._km.is_alive():
+        return False
+    try:
+        msg_id = self._kc.kernel_info()
+        reply = self._kc.get_shell_msg(timeout=2)
+        return reply.get("msg_type") == "kernel_info_reply"
+    except Exception:
+        return False
+
+def _restart_kernel(self) -> None:
+    """Shuts down dead kernel and starts a fresh one."""
+    try:
+        if self._km and self._km.is_alive():
+            self._km.shutdown_kernel(now=True)
+    except Exception:
+        pass
+    self._km = None
+    self._kc = None
+    self._ensure_kernel_started()   # re-raises if startup fails
+```
+
+**Error propagation:** `KernelCrashError` is a new domain exception (subclass of
+`CodeExecutionError`). When raised from a tool, the tool wrapper converts it to
+`"Error: Jupyter kernel crashed. Please try re-running your analysis."` so Claude
+can self-correct.
+
+### 9.3 Backend Validation at Application Startup (Gap 9)
+
+`CodeRunnerFactory.create()` raises `ValueError` for an invalid `CODE_EXECUTION_BACKEND`
+value. Currently this error is first triggered at the moment the first code-execution
+tool is called — potentially deep inside a multi-step analysis.
+
+**Required: Eager probe at startup (`app/main.py`)**
+
+```python
+from app.infrastructure.code_runner import CodeRunnerFactory
+
+@app.on_event("startup")
+async def _validate_code_backend() -> None:
+    """
+    Validates CODE_EXECUTION_BACKEND at startup.
+    Exits with code 1 if the backend name is unknown, preventing silent misconfiguration.
+    """
+    try:
+        CodeRunnerFactory.create(settings.code_execution_backend, "__probe__").shutdown()
+    except ValueError as e:
+        import sys
+        logger.critical(
+            "Invalid CODE_EXECUTION_BACKEND=%r: %s — shutting down.",
+            settings.code_execution_backend, e,
+        )
+        sys.exit(1)
+```
+
+This converts a silent runtime surprise into a fast-fail at deployment time.
+
+### 9.4 Updated Error Handling Table
+
+```
+┌──────────────────────────┬──────────────────────┬──────────────────────┬──────────────────┐
+│  Error Type              │ Subprocess           │ Jupyter              │ Anthropic        │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Syntax error             │ Captured in stderr   │ Captured in          │ In stdout        │
+│                          │ via traceback        │ "error" message      │                  │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Runtime exception        │ Captured in stderr   │ Captured in          │ In stdout        │
+│                          │ via traceback        │ "error" message      │                  │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Timeout                  │ success=False,       │ Kernel restart,      │ API error        │
+│                          │ stderr="timed out"   │ success=False        │ exception        │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ OOM / memory             │ Killed by OS         │ Kernel dies →        │ Anthropic        │
+│                          │ (RLIMIT_AS)          │ _restart_kernel()    │ managed          │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Banned import            │ CodeSecurityError    │ N/A (no AST check)   │ N/A              │
+│                          │ → success=False      │                      │                  │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Kernel crash             │ N/A                  │ KernelCrashError →   │ N/A              │
+│                          │                      │ tool Error string    │                  │
+├──────────────────────────┼──────────────────────┼──────────────────────┼──────────────────┤
+│ Pickle failure           │ State lost,          │ N/A                  │ N/A              │
+│                          │ logged to stderr     │                      │                  │
+└──────────────────────────┴──────────────────────┴──────────────────────┴──────────────────┘
+```

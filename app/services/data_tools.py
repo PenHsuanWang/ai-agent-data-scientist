@@ -60,9 +60,11 @@ def get_execution_variables(runner: "CodeRunner") -> str:
 
 
 def get_figure(figure_id: str, session: "AnalysisSession") -> str:
-    """Return base64-encoded PNG for a figure generated in this session.
+    """Return metadata and retrieval URL for a figure generated in this session.
 
-    Returns JSON with figure_id, format, encoding, and data.
+    Returns JSON with figure_id, format, approximate size, and retrieval_url.
+    The figure image itself is served by GET /api/v1/analysis/{session_id}/figures/{figure_id}
+    to keep tool responses small and avoid LLM context overflow (Gap 7).
     """
     b64 = session.figures.get(figure_id)
     if b64 is None:
@@ -71,11 +73,17 @@ def get_figure(figure_id: str, session: "AnalysisSession") -> str:
             "error": f"Figure '{figure_id}' not found.",
             "available_figures": available,
         })
+    # Approximate decoded size: base64 chars × 0.75
+    approx_bytes = int(len(b64) * 0.75)
     return json.dumps({
         "figure_id": figure_id,
         "format": "png",
-        "encoding": "base64",
-        "data": b64,
+        "size_bytes": approx_bytes,
+        "retrieval_url": f"/api/v1/analysis/{session.session_id}/figures/{figure_id}",
+        "note": (
+            "Figure has been saved in the session. "
+            "Download it via the retrieval_url or call save_figure to write it to disk."
+        ),
     })
 
 

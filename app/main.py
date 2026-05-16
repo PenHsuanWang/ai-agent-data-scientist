@@ -4,6 +4,7 @@ Registers all routers including new analysis and datasets routers.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from contextlib import asynccontextmanager
@@ -28,19 +29,71 @@ def _configure_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
+async def _gc_sessions_task() -> None:
+    """Background task: evict stale sessions and release their CodeRunners (Gaps 5, 15).
+
+    Runs every 5 minutes.  Calls ``shutdown_session`` on the agent service to
+    free any CodeRunner resources (subprocess handles, Jupyter kernel sockets)
+    before removing the session from the store.
+    """
+    from app.services.data_agent import data_science_agent
+    from app.services.memory import analysis_session_store
+
+    logger = logging.getLogger(__name__)
+    while True:
+        await asyncio.sleep(300)  # 5-minute cadence
+        try:
+            expired = analysis_session_store.get_expired_ids()
+            for sid in expired:
+                data_science_agent.shutdown_session(sid)
+                analysis_session_store.delete(sid)
+            if expired:
+                logger.info(
+                    "GC evicted %d stale session(s): %s",
+                    len(expired),
+                    expired,
+                )
+        except Exception as exc:
+            logger.warning("Session GC task error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     _configure_logging()
     logger = logging.getLogger(__name__)
     settings.ensure_directories()
+
+    # Validate code execution backend at startup (Gap 9).
+    # Exit immediately if misconfigured rather than failing silently at runtime.
+    try:
+        from app.infrastructure.code_runner import CodeRunnerFactory
+        probe = CodeRunnerFactory.create(session_id="__startup_probe__")
+        probe.shutdown()
+        logger.info("Code execution backend '%s' validated OK", settings.code_execution_backend)
+    except ValueError as exc:
+        logger.critical(
+            "Invalid CODE_EXECUTION_BACKEND=%r: %s — shutting down.",
+            settings.code_execution_backend,
+            exc,
+        )
+        sys.exit(1)
+    except Exception as exc:
+        # Non-fatal (e.g. Jupyter not installed but backend=subprocess): log and continue
+        logger.warning("Backend probe warning: %s", exc)
+
     logger.info(
         "Starting Data Scientist Agent | env=%s | model=%s | backend=%s",
         settings.app_env,
         settings.claude_model,
         settings.code_execution_backend,
     )
-    yield
-    logger.info("Shutting down Data Scientist Agent.")
+
+    gc_task = asyncio.create_task(_gc_sessions_task())
+    try:
+        yield
+    finally:
+        gc_task.cancel()
+        logger.info("Shutting down Data Scientist Agent.")
 
 
 def create_app() -> FastAPI:
@@ -59,7 +112,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

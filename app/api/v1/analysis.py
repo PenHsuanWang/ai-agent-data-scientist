@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, Response
 
-from app.domain.analysis_models import AnalysisSession
-from app.domain.exceptions import AgentError, ReActLoopError
+from app.domain.analysis_models import AnalysisSession, DatasetMeta
+from app.domain.exceptions import (
+    AgentError,
+    LLMAPIError,
+    LLMAuthenticationError,
+    LLMContextOverflowError,
+    ReActLoopError,
+)
 from app.schemas.analysis import (
     AnalysisRequest,
     AnalysisResponse,
@@ -22,6 +29,45 @@ from app.services.memory import analysis_session_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _try_preload_dataset(session: AnalysisSession, dataset_hint: str | None) -> None:
+    """Pre-load dataset metadata into the session if a hint is provided (Gap 12).
+
+    Calls ``inspect_dataset`` and registers the resulting ``DatasetMeta`` so
+    Claude can reference it without a round-trip tool call.  Failures are
+    logged and silently swallowed so they never block the main request.
+    """
+    if not dataset_hint:
+        return
+    try:
+        from app.services.knowledge_tools import inspect_dataset
+        raw = inspect_dataset(dataset_hint)
+        data = json.loads(raw)
+        if "error" in data:
+            logger.warning(
+                "dataset_hint pre-load failed for '%s': %s", dataset_hint, data["error"]
+            )
+            return
+        meta = DatasetMeta(
+            file_name=data["file_name"],
+            format=data["format"],
+            rows=data["rows"],
+            columns=data["columns"],
+            column_names=data["column_names"],
+            dtypes=data["dtypes"],
+            numeric_stats=data["numeric_stats"],
+            size_bytes=0,
+        )
+        session.register_dataset(meta)
+        logger.info(
+            "Pre-loaded dataset '%s' (%d rows) for session %s",
+            dataset_hint, meta.rows, session.session_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "dataset_hint pre-load raised for '%s': %s", dataset_hint, exc
+        )
 
 
 @router.post(
@@ -44,6 +90,7 @@ async def analysis_chat(request: AnalysisRequest) -> AnalysisResponse:
 
     try:
         session = analysis_session_store.get_or_create(session_id)
+        _try_preload_dataset(session, request.dataset_hint)
         answer = await data_science_agent.run(session, request.message)
         analysis_session_store.save(session)
 
@@ -78,6 +125,36 @@ async def analysis_chat(request: AnalysisRequest) -> AnalysisResponse:
             status="completed",
         )
 
+    except LLMContextOverflowError as exc:
+        logger.warning("Context overflow (session=%s): %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "context_overflow",
+                "message": (
+                    "The conversation history is too long for the model. "
+                    "Please start a new session."
+                ),
+            },
+        )
+    except LLMAuthenticationError as exc:
+        logger.error("LLM auth error (session=%s): %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error": "llm_auth_error",
+                "message": "The AI service authentication failed. Please contact support.",
+            },
+        )
+    except LLMAPIError as exc:
+        logger.error("LLM API error (session=%s): %s", session_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error": "llm_api_error",
+                "message": "The AI service is temporarily unavailable. Please retry.",
+            },
+        )
     except ReActLoopError as exc:
         logger.warning("ReAct loop error (session=%s): %s", session_id, exc)
         return AnalysisResponse(
@@ -122,7 +199,20 @@ async def get_figure(session_id: str, figure_id: str) -> Response:
             detail=f"Figure '{figure_id}' not found. Available: {list(session.figures.keys())}",
         )
 
-    img_bytes = base64.b64decode(b64)
+    try:
+        img_bytes = base64.b64decode(b64)
+    except Exception:
+        logger.error(
+            "Figure '%s' in session '%s' has corrupted base64 data",
+            figure_id, session_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "corrupted_figure",
+                "message": f"Figure '{figure_id}' data is corrupted and cannot be decoded.",
+            },
+        )
     return Response(content=img_bytes, media_type="image/png")
 
 

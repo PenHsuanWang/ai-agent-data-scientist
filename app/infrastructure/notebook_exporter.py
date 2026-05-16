@@ -61,7 +61,11 @@ def export_notebook(session: AnalysisSession, title: str) -> str:
                         cells.append(nbformat.v4.new_markdown_cell(
                             f"**Action:** `{action}`\n\n**Observation:**\n```\n{observation}\n```"
                         ))
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "Could not extract code from action string (using markdown fallback): %s",
+                        exc,
+                    )
                     cells.append(nbformat.v4.new_markdown_cell(
                         f"**Action:** `{action}`\n\n**Observation:**\n```\n{observation}\n```"
                     ))

@@ -194,21 +194,28 @@ class ErrorDetail(BaseModel):
 
 **HTTP Status Code Mapping:**
 
-| Error Condition                   | HTTP Status | `error` Code           |
-|-----------------------------------|-------------|------------------------|
-| Invalid request body              | 422         | `validation_error`     |
-| Session not found                 | 404         | `session_not_found`    |
-| Figure not found                  | 404         | `figure_not_found`     |
-| Dataset not found                 | 404         | `dataset_not_found`    |
-| Notebook not generated            | 404         | `notebook_not_available` |
-| ReAct max iterations exceeded     | 500         | `react_loop_exhausted` |
-| Claude API error                  | 502         | `llm_api_error`        |
-| Code execution timeout            | 500         | `code_timeout`         |
-| Generic server error              | 500         | `internal_error`       |
+| Error Condition                        | HTTP Status | `error` Code             | Gap Ref  |
+|----------------------------------------|-------------|--------------------------|----------|
+| Invalid request body                   | 422         | `validation_error`       | —        |
+| Session not found                      | 404         | `session_not_found`      | —        |
+| Figure not found                       | 404         | `figure_not_found`       | —        |
+| Dataset not found                      | 404         | `dataset_not_found`      | —        |
+| Notebook not generated                 | 404         | `notebook_not_available` | —        |
+| ReAct max iterations exceeded          | 500         | `react_loop_exhausted`   | —        |
+| ReAct parse correction injected        | 200         | _(trace only)_           | Gap 16   |
+| LLM prompt context overflow            | 400         | `context_overflow`       | Gap 3    |
+| Claude API transient / rate-limit error| 502         | `llm_api_error`          | Gap 1    |
+| Claude authentication failure          | 502         | `llm_auth_error`         | Gap 1    |
+| Corrupted figure data (b64 decode)     | 422         | `corrupted_figure`       | Gap 6    |
+| Notebook file missing at serve time    | 404         | `notebook_file_missing`  | —        |
+| Code execution timeout                 | 500         | `code_timeout`           | —        |
+| Jupyter kernel crash                   | 500         | `kernel_crash`           | Gap 8    |
+| Generic server error                   | 500         | `internal_error`         | —        |
 
 > **Design note**: ReAct errors (exhausted iterations, malformed output) return 500, not 200. This
 > differs from some systems that embed domain errors in HTTP 200 bodies. Here, HTTP status reflects
-> transport + application-level success; agent reasoning failures are not "expected" outcomes.
+> transport + application-level success; agent reasoning failures are not "expected" outcomes.  
+> `context_overflow` returns **400** (client-actionable: start a new session), not 500.
 
 ---
 
@@ -300,12 +307,41 @@ async def analysis_chat(request: AnalysisRequest) -> AnalysisResponse:
                 react_trace=_build_trace(session),
             ).model_dump(),
         )
-    except Exception as e:
-        code = 502 if "API" in type(e).__name__ else 500
+    except LLMContextOverflowError as e:     # Gap 3 — context overflow
         raise HTTPException(
-            status_code=code,
+            status_code=400,
             detail=ErrorDetail(
-                error="llm_api_error" if code == 502 else "internal_error",
+                error="context_overflow",
+                message=(
+                    "The conversation history is too long for the model context window. "
+                    "Please start a new session."
+                ),
+                session_id=session_id,
+            ).model_dump(),
+        )
+    except LLMAuthenticationError as e:     # Gap 1 — bad API key
+        raise HTTPException(
+            status_code=502,
+            detail=ErrorDetail(
+                error="llm_auth_error",
+                message="Claude API authentication failed. Check ANTHROPIC_API_KEY.",
+                session_id=session_id,
+            ).model_dump(),
+        )
+    except LLMAPIError as e:                 # Gap 1 — transient / rate-limit
+        raise HTTPException(
+            status_code=502,
+            detail=ErrorDetail(
+                error="llm_api_error",
+                message=str(e),
+                session_id=session_id,
+            ).model_dump(),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=ErrorDetail(
+                error="internal_error",
                 message=str(e),
                 session_id=session_id,
             ).model_dump(),
@@ -351,8 +387,15 @@ async def get_figure(session_id: str, figure_id: str) -> Response:
 
     try:
         png_bytes = base64.b64decode(session.figures[figure_id])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, Exception) as e:     # Gap 6 — corrupted base64 data
+        raise HTTPException(
+            status_code=422,
+            detail=ErrorDetail(
+                error="corrupted_figure",
+                message=f"Figure '{figure_id}' data is corrupted and cannot be decoded.",
+                details={"figure_id": figure_id},
+            ).model_dump(),
+        )
 
     return Response(
         content=png_bytes,
@@ -895,3 +938,65 @@ curl http://localhost:8000/api/v1/datasets/power_plant_data.csv/schema
 | `session_id` alphanumeric + hyphens only | Prevents path-injection in notebook glob pattern (`f"{session_id}_*.ipynb"`). |
 | `notebooks_dir` glob sorted by mtime | Handles re-export of same session (overwrites or appends timestamp); always returns the latest .ipynb. |
 | Thin handler pattern | All ReAct logic, tool dispatch, and validation live in `DataScienceAgentService`. The handler's only jobs are: deserialise, session CRUD, delegate, serialise. |
+
+---
+
+## 13. CORS Configuration (Gap 14)
+
+The current `main.py` adds `CORSMiddleware` with `allow_origins=["*"]` unconditionally.
+This is a security risk in production because it permits any origin to make
+credentialed cross-origin requests.
+
+**Required: Environment-aware CORS**
+
+```python
+# app/core/config.py
+class Settings(BaseSettings):
+    ...
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:8001"],
+        description=(
+            "Comma-separated list of allowed CORS origins. "
+            "Set to ['*'] only for local development."
+        ),
+    )
+
+# app/main.py
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,   # ← env-configurable, not hardcoded *
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+**Production `.env` example:**
+```
+CORS_ORIGINS=["https://my-dashboard.example.com","https://api-internal.example.com"]
+```
+
+> See `SRS_robustness.md §EPIC-6 Story 6.1` for the full acceptance criteria.
+
+---
+
+## 14. `dataset_hint` Field — Known Implementation Gap (Gap 12)
+
+The `AnalysisRequest.dataset_hint` field is declared in the schema and documented in
+the OpenAPI spec, but the `_try_preload_dataset()` call in the handler is a stub:
+
+```python
+# Current (stub — does not actually preload):
+if request.dataset_hint:
+    _try_preload_dataset(session, request.dataset_hint)
+```
+
+**Expected behaviour once implemented:**
+1. Call `inspect_dataset(file_name=request.dataset_hint)` on behalf of the session.
+2. Inject the resulting schema JSON into the system prompt via `ContextInjector`.
+3. The agent sees the dataset summary without spending an iteration on it.
+
+Until this is implemented, the field is accepted but silently ignored. Clients must
+not rely on it for pre-population. This is tracked in
+`SRS_robustness.md §EPIC-2 Story 2.1` (dataset size guard) which will be implemented
+at the same time.

@@ -21,7 +21,13 @@ from anthropic import AsyncAnthropic
 
 from app.core.config import settings
 from app.domain.analysis_models import AnalysisSession, PhysicalUnit
-from app.domain.exceptions import ReActLoopError, ReActParseError
+from app.domain.exceptions import (
+    LLMAPIError,
+    LLMAuthenticationError,
+    LLMContextOverflowError,
+    ReActLoopError,
+    ReActParseError,
+)
 from app.infrastructure.code_runner import CodeRunner, CodeRunnerFactory
 from app.infrastructure.unit_registry import (
     check_magnitude,
@@ -220,6 +226,71 @@ class DataScienceAgentService:
             )
         return self._runners[session.session_id]
 
+    async def _call_claude_with_retry(
+        self,
+        session: AnalysisSession,
+        system_prompt: str,
+    ) -> str:
+        """Call the Anthropic API with structured error classification.
+
+        The SDK-level ``max_retries`` setting already handles transient
+        connection errors and 429 rate-limit responses.  This method adds
+        application-level exception classification on top:
+
+        - ``LLMAuthenticationError`` — fast-fail; no retry makes sense.
+        - ``LLMContextOverflowError`` — 400 "prompt too long"; caller must
+          inform the user to start a new session.
+        - ``LLMAPIError`` — any other Anthropic API failure.
+        """
+        import anthropic as _ant
+
+        try:
+            response = await _client.messages.create(
+                model=settings.claude_model,
+                max_tokens=settings.max_tokens,
+                system=system_prompt,
+                messages=session.messages,
+            )
+        except _ant.AuthenticationError as exc:
+            raise LLMAuthenticationError(
+                f"Anthropic API key is invalid or revoked: {exc}"
+            ) from exc
+        except _ant.BadRequestError as exc:
+            lower = str(exc).lower()
+            if any(
+                kw in lower
+                for kw in (
+                    "prompt is too long",
+                    "context_length_exceeded",
+                    "too many tokens",
+                    "context window",
+                    "max_tokens",
+                )
+            ):
+                raise LLMContextOverflowError(
+                    "Message history exceeds the model's context window. "
+                    "Please start a new session to continue. "
+                    f"Detail: {exc}"
+                ) from exc
+            raise LLMAPIError(f"Anthropic API bad request: {exc}", status_code=400) from exc
+        except _ant.APIError as exc:
+            status = getattr(exc, "status_code", None)
+            raise LLMAPIError(
+                f"Anthropic API error ({type(exc).__name__}): {exc}",
+                status_code=status,
+            ) from exc
+        except Exception as exc:
+            raise LLMAPIError(
+                f"Unexpected error calling Claude API: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        raw_text = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                raw_text = block.text
+                break
+        return raw_text
+
     def _build_tool_registry(
         self, session: AnalysisSession, runner: CodeRunner
     ) -> dict[str, Callable[..., str]]:
@@ -304,11 +375,49 @@ class DataScienceAgentService:
         Raises:
             ReActLoopError: If the loop exceeds MAX_REACT_ITERATIONS or encounters
                             unrecoverable parsing failures.
+            LLMContextOverflowError: If the message history is too long.
+            LLMAuthenticationError: If the API key is invalid.
+            LLMAPIError: For any other Anthropic API failure.
+
+        Note:
+            On LLM API errors the session message history is rolled back to
+            its state before this call, so the session remains consistent.
         """
         runner = self._get_runner(session)
         tool_registry = self._build_tool_registry(session, runner)
         system_prompt = _build_system_prompt()
 
+        # Snapshot message history BEFORE appending anything (Gap 2).
+        # Rolled back if an LLM API error is raised, keeping the session clean.
+        checkpoint = len(session.messages)
+
+        try:
+            return await self._run_loop(
+                session=session,
+                user_message=user_message,
+                tool_registry=tool_registry,
+                system_prompt=system_prompt,
+            )
+        except (LLMAPIError, LLMContextOverflowError, LLMAuthenticationError):
+            # Roll back any partial messages added during this run
+            if len(session.messages) > checkpoint:
+                logger.warning(
+                    "LLM API error — rolling back session %s messages from %d → %d",
+                    session.session_id,
+                    len(session.messages),
+                    checkpoint,
+                )
+                session.messages = session.messages[:checkpoint]
+            raise
+
+    async def _run_loop(
+        self,
+        session: AnalysisSession,
+        user_message: str,
+        tool_registry: dict,
+        system_prompt: str,
+    ) -> str:
+        """Inner ReAct loop (separated from run() to keep rollback logic clean)."""
         session.add_user_message(user_message)
 
         last_thought = ""
@@ -322,19 +431,8 @@ class DataScienceAgentService:
                 session.session_id,
             )
 
-            # ── Call Claude ────────────────────────────────────────── #
-            response = await _client.messages.create(
-                model=settings.claude_model,
-                max_tokens=settings.max_tokens,
-                system=system_prompt,
-                messages=session.messages,
-            )
-
-            raw_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    raw_text = block.text
-                    break
+            # ── Call Claude (classified, retried by SDK) ───────────── #
+            raw_text = await self._call_claude_with_retry(session, system_prompt)
 
             logger.debug("Claude raw response (iter %d): %.300s", iteration, raw_text)
 
@@ -360,10 +458,19 @@ class DataScienceAgentService:
             if parsed["type"] == "parse_error":
                 parse_error_count += 1
                 logger.warning(
-                    "ReAct parse error (session=%s, attempt %d): %s",
+                    "ReAct parse error (session=%s, attempt %d/3): %s",
                     session.session_id,
                     parse_error_count,
                     parsed["reason"],
+                )
+                # Record parse errors in the trace with a sentinel action (Gap 16)
+                session.append_react_step(
+                    thought=last_thought,
+                    action="__parse_error__",
+                    observation=(
+                        f"Parse error {parse_error_count}/3: {parsed['reason']} "
+                        f"| raw={parsed['raw'][:200]}"
+                    ),
                 )
                 if parse_error_count >= 3:
                     raise ReActLoopError(

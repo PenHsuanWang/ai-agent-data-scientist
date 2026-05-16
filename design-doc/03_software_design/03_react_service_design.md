@@ -1003,3 +1003,117 @@ class DataScienceAgentService:
             return answer + "\n\n**Physical Validation Warnings:**\n" + "\n".join(warnings)
         return answer
 ```
+
+---
+
+## 13. API Error Guard and Session State Protection
+
+> **Context:** This section addresses Gaps 1–3 from the exception-handling audit.  
+> Full pseudocode is in `09_exception_handling_design.md §3`.
+
+### 13.1 Motivation
+
+The current `run()` implementation calls `self._client.messages.create()` without any
+try/except. A transient network hiccup or a rate-limit response propagates as an
+unhandled exception that:
+- Leaves `session.messages` with an appended user message that will never receive an
+  assistant reply — corrupting subsequent requests on the same session.
+- Surfaces as an unclassified 500 instead of a retried request or a proper 502/429.
+
+### 13.2 `_call_claude_with_retry()` Contract
+
+```python
+async def _call_claude_with_retry(
+    self,
+    session: AnalysisSession,
+    system_prompt: str,
+    *,
+    max_retries: int = 3,
+) -> str:
+    """
+    Wraps the raw Anthropic API call with:
+      - Exponential back-off for transient errors (connection, status ≥500)
+      - Respect for Retry-After header on 429 RateLimitError
+      - Immediate raise (no retry) for AuthenticationError and non-429 BadRequestError
+      - Raises LLMContextOverflowError when token count exceeds model limit
+      - Raises LLMAPIError for all other terminal API failures
+    """
+```
+
+**Retry decision table:**
+
+| Exception class | Retry? | Back-off | Raise on exhaustion |
+|---|---|---|---|
+| `anthropic.APIConnectionError` | ✅ Yes | Exponential (1 s, 2 s, 4 s) | `LLMAPIError` |
+| `anthropic.APIStatusError` (≥500) | ✅ Yes | Exponential | `LLMAPIError` |
+| `anthropic.RateLimitError` | ✅ Yes | `Retry-After` header or 60 s | `LLMAPIError` |
+| `anthropic.BadRequestError` (context overflow) | ❌ No | — | `LLMContextOverflowError` |
+| `anthropic.AuthenticationError` | ❌ No | — | `LLMAuthenticationError` |
+| Any other `AnthropicError` | ❌ No | — | `LLMAPIError` |
+
+### 13.3 Session Rollback on Failure
+
+To prevent message-history corruption when a call fails, the `run()` entrypoint must
+snapshot the conversation length at entry and truncate on any unrecovered exception:
+
+```python
+async def run(self, session: AnalysisSession) -> str:
+    checkpoint = len(session.messages)   # snapshot before any mutation
+    try:
+        return await self._run_loop(session)
+    except Exception:
+        # Truncate back to checkpoint, discarding the in-flight turn
+        session.messages = session.messages[:checkpoint]
+        raise
+```
+
+**State machine for a single `run()` call:**
+
+```
+ENTRY
+  │
+  ▼
+snapshot checkpoint = len(session.messages)
+  │
+  ▼
+_run_loop()
+  ├─ SUCCESS ──► return Final Answer  (session.messages retained)
+  │
+  └─ EXCEPTION
+         │
+         ▼
+   session.messages = messages[:checkpoint]  (rollback)
+         │
+         ▼
+   re-raise (propagates to API handler → structured HTTP response)
+```
+
+### 13.4 Context Overflow Handling
+
+When `LLMContextOverflowError` is raised inside `_run_loop()`:
+
+1. **Do not retry** — the error is deterministic given the current message history.
+2. **Rollback session** (as per §13.3).
+3. **Propagate** as a `400 context_overflow` HTTP response so the client can start a
+   new session (the `session_id` in the response helps with correlation).
+
+### 13.5 Parse-Error Trace Recording
+
+Parse errors (`ReActParseError`) are currently recovered silently. The recovery
+observation must be visible in `react_trace` with a reserved action name so operators
+can detect prompt quality degradation:
+
+```python
+except ReActParseError:
+    error_obs = self._parser.handle_malformed(response_text, iteration)
+    session.add_user_message(error_obs)
+    session.append_react_step(
+        thought="[malformed response — format correction injected]",
+        action="__parse_error__",          # reserved sentinel name
+        observation=error_obs,
+    )
+    continue
+```
+
+This ensures the `react_trace` in the HTTP response accurately reflects every step,
+including failed parse attempts.

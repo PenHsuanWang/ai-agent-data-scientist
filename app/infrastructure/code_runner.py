@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import abc
 import logging
+import resource
 import subprocess
 import sys
 import textwrap
@@ -20,6 +21,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.domain.analysis_models import AnalysisResult
+from app.domain.exceptions import KernelCrashError
 from app.infrastructure.style_config import STYLE_PREAMBLE
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,34 @@ class CodeRunner(abc.ABC):
 
 
 # ──────────────────────────────────────────────────────────────────── #
+# Subprocess resource limits (Unix only — Gap 13)                       #
+# ──────────────────────────────────────────────────────────────────── #
+
+def _apply_subprocess_limits() -> None:
+    """Set per-process resource limits inside the child process.
+
+    Called as ``preexec_fn`` on Unix so it runs *after* fork but *before* exec.
+    Silently ignored on failure so a missing limit never blocks execution.
+    Limits:
+      RLIMIT_AS  — 512 MB virtual memory (prevents runaway allocations)
+      RLIMIT_CPU — code_execution_timeout + 10 s (belt-and-suspenders for timeout)
+    """
+    try:
+        mem_limit = 512 * 1024 * 1024  # 512 MB
+        resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
+    except Exception:
+        pass
+    try:
+        cpu_limit = settings.code_execution_timeout + 10
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
+    except Exception:
+        pass
+
+
+_PREEXEC_FN = _apply_subprocess_limits if sys.platform != "win32" else None
+
+
+# ──────────────────────────────────────────────────────────────────── #
 # Subprocess backend (default)                                          #
 # ──────────────────────────────────────────────────────────────────── #
 
@@ -91,6 +121,7 @@ class SubprocessCodeRunner(CodeRunner):
                 capture_output=True,
                 text=True,
                 timeout=settings.code_execution_timeout,
+                preexec_fn=_PREEXEC_FN,
             )
         except subprocess.TimeoutExpired:
             elapsed = int((time.monotonic() - start) * 1000)
@@ -205,11 +236,53 @@ class JupyterKernelManager(CodeRunner):
                 "Install with: pip install jupyter_client ipykernel"
             )
 
+    def _probe_alive(self) -> bool:
+        """Return True if the kernel process is alive and accepts kernel_info requests."""
+        if not self._started or self._km is None or self._kc is None:
+            return False
+        try:
+            if not self._km.is_alive():
+                return False
+            msg_id = self._kc.kernel_info()
+            msg = self._kc.get_shell_msg(timeout=3)
+            return msg.get("msg_type") == "kernel_info_reply" and msg.get("parent_header", {}).get("msg_id") == msg_id
+        except Exception:
+            return False
+
+    def _restart_kernel(self) -> None:
+        """Shut down and restart the Jupyter kernel.
+
+        Raises:
+            KernelCrashError: if the kernel cannot be restarted.
+        """
+        logger.warning(
+            "Restarting dead Jupyter kernel for session %s", self._session_id
+        )
+        try:
+            if self._km is not None:
+                self._km.shutdown_kernel(now=True)
+        except Exception:
+            pass
+        self._km = None
+        self._kc = None
+        self._started = False
+        try:
+            self._start()
+        except Exception as exc:
+            raise KernelCrashError(self._session_id, str(exc)) from exc
+
     def execute(self, code: str) -> AnalysisResult:
         try:
             self._start()
         except Exception as exc:
             return AnalysisResult(success=False, stderr=str(exc))
+
+        # Probe kernel health; attempt one restart on failure (Gap 8)
+        if not self._probe_alive():
+            try:
+                self._restart_kernel()
+            except KernelCrashError as exc:
+                return AnalysisResult(success=False, stderr=str(exc))
 
         start = time.monotonic()
         msg_id = self._kc.execute(code)
@@ -300,10 +373,18 @@ class JupyterKernelManager(CodeRunner):
 class CodeRunnerFactory:
     """Creates the appropriate CodeRunner based on configuration."""
 
+    VALID_BACKENDS: frozenset[str] = frozenset({"subprocess", "jupyter", "anthropic"})
+
     @staticmethod
     def create(session_id: str | None = None) -> CodeRunner:
         sid = session_id or str(uuid.uuid4())
         backend = settings.code_execution_backend.lower()
+
+        if backend not in CodeRunnerFactory.VALID_BACKENDS:
+            raise ValueError(
+                f"Unknown code execution backend: '{backend}'. "
+                f"Valid options: {sorted(CodeRunnerFactory.VALID_BACKENDS)}"
+            )
 
         if backend == "subprocess":
             return SubprocessCodeRunner(session_id=sid)
@@ -311,6 +392,5 @@ class CodeRunnerFactory:
             return JupyterKernelManager(session_id=sid)
         else:
             raise ValueError(
-                f"Unknown code execution backend: '{backend}'. "
-                "Valid options: subprocess, jupyter, anthropic"
+                f"Backend '{backend}' is recognised but not yet implemented."
             )

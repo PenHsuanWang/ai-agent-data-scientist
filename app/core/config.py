@@ -45,6 +45,22 @@ class Settings(BaseSettings):
     # ── ReAct loop ─────────────────────────────────────────────────── #
     max_react_iterations: int = Field(20, alias="MAX_REACT_ITERATIONS")
 
+    # ── CORS ───────────────────────────────────────────────────────── #
+    # JSON array of allowed origins; e.g. '["https://app.example.com"]'
+    # Defaults to localhost dev origins. Set to ["*"] only for development.
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:8001"],
+        alias="CORS_ORIGINS",
+    )
+
+    # ── Dataset limits ─────────────────────────────────────────────── #
+    # Max file size (bytes) for inspect_dataset / describe_columns.
+    max_dataset_bytes: int = Field(200 * 1024 * 1024, alias="MAX_DATASET_BYTES")  # 200 MB
+
+    # ── Session lifecycle ──────────────────────────────────────────── #
+    # Seconds of inactivity before a session is eligible for GC.
+    session_ttl_seconds: int = Field(3600, alias="SESSION_TTL_SECONDS")  # 1 hour
+
     # ── Output directories ─────────────────────────────────────────── #
     figures_dir: Path = Field(Path("outputs/figures"), alias="FIGURES_DIR")
     notebooks_dir: Path = Field(Path("outputs/notebooks"), alias="NOTEBOOKS_DIR")

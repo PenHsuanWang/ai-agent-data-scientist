@@ -53,7 +53,13 @@ def list_domain_documents() -> str:
         f for f in docs_dir.iterdir()
         if f.is_file() and f.suffix.lower() in {".md", ".txt", ".rst"}
     )
-    result = [{"file_name": f.name, "size_bytes": f.stat().st_size} for f in files]
+    result = []
+    for f in files:
+        try:
+            size = f.stat().st_size
+        except OSError:
+            size = 0
+        result.append({"file_name": f.name, "size_bytes": size})
     return json.dumps(result)
 
 
@@ -171,10 +177,13 @@ def list_datasets() -> str:
                    ".xls": "excel", ".h5": "hdf5", ".hdf5": "hdf5", ".json": "json"}
         return mapping.get(ext, ext.lstrip("."))
 
-    result = [
-        {"file_name": f.name, "format": _fmt(f), "size_bytes": f.stat().st_size}
-        for f in files
-    ]
+    result = []
+    for f in files:
+        try:
+            size = f.stat().st_size
+        except OSError:
+            size = 0
+        result.append({"file_name": f.name, "format": _fmt(f), "size_bytes": size})
     return json.dumps(result)
 
 
@@ -198,6 +207,18 @@ def inspect_dataset(file_name: str) -> str:
             f"Error: Dataset '{file_name}' not found. "
             "Call list_datasets to see available files."
         )
+
+    # Reject files that exceed the configured size limit (Gap 4)
+    try:
+        file_size = target.stat().st_size
+        if file_size > settings.max_dataset_bytes:
+            return (
+                f"Error: Dataset '{file_name}' is too large "
+                f"({file_size:,} bytes > {settings.max_dataset_bytes:,} byte limit). "
+                "Use a sampled or filtered version of the file."
+            )
+    except OSError as exc:
+        return f"Error: Cannot access '{file_name}' — {exc}"
 
     try:
         import pandas as pd
@@ -268,6 +289,18 @@ def describe_columns(file_name: str, columns: list[str]) -> str:
         return f"Error: '{file_name}' contains invalid path components."
     if not target.exists():
         return f"Error: Dataset '{file_name}' not found."
+
+    # Reject files that exceed the configured size limit (Gap 4)
+    try:
+        file_size = target.stat().st_size
+        if file_size > settings.max_dataset_bytes:
+            return (
+                f"Error: Dataset '{file_name}' is too large "
+                f"({file_size:,} bytes > {settings.max_dataset_bytes:,} byte limit). "
+                "Use a sampled or filtered version of the file."
+            )
+    except OSError as exc:
+        return f"Error: Cannot access '{file_name}' — {exc}"
 
     try:
         import pandas as pd
