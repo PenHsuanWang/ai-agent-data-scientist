@@ -1,6 +1,6 @@
 # Data Scientist AI Agent
 
-> **Domain-aware AI agent for data science** — FastAPI + Anthropic Claude + ReAct reasoning loop + `pint` physical unit validation + Jupyter notebook export.
+> **Domain-aware AI agent for data science** — FastAPI + Anthropic Claude + native tool calling + `pint` physical unit validation + Redis-backed memory + Jupyter notebook export.
 
 ---
 
@@ -8,7 +8,9 @@
 
 | Feature | Description |
 |---|---|
-| **ReAct Reasoning Trace** | Full `Thought → Action → Observation` loop visible in API response |
+| **Native Tool Calling** | Anthropic JSON-schema tools — no text parsing; full tool-use trace visible in API response |
+| **Redis-backed Memory** | `RedisMemoryManager` + `AgentSessionState` — stateless workers, horizontal scalability |
+| **Prompt Caching** | System prompt and tool schemas cached with `cache_control: ephemeral` — lower cost per turn |
 | **Physical Validation** | `pint`-backed unit registry enforces thermodynamic constraints (efficiency ≤ 100%, T > 0 K, etc.) |
 | **15 Tools** | 6 knowledge + 6 execution + 3 validation tools |
 | **Notebook Export** | Every session exportable as `.ipynb` with code cells and reasoning |
@@ -22,16 +24,18 @@
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                   Presentation Layer                     │
-│         app/api/v1/analysis.py · datasets.py            │
+│   app/api/v1/analysis.py · datasets.py                  │
+│   app/api/deps.py  (get_redis_client, get_memory_mgr)   │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
 │                  Application Layer                       │
-│   app/services/data_agent.py   ← ReAct Loop             │
+│   app/services/data_agent.py  ← native tool-use loop   │
+│   app/services/context_manager.py (sliding window+cache)│
 │   app/services/knowledge_tools.py  (Group A, 6 tools)   │
 │   app/services/data_tools.py       (Group B, 6 tools)   │
 │   app/services/tool_definitions.py (15 tool schemas)    │
-│   app/services/memory.py           (session store)      │
+│   app/services/memory.py           (in-memory + Redis)  │
 └──────────┬──────────────────────────────────────────────┘
            │
 ┌──────────▼──────────────────────────────────────────────┐
@@ -43,6 +47,7 @@
            │
 ┌──────────▼──────────────────────────────────────────────┐
 │                    Domain Layer                          │
+│   app/domain/state_models.py  (AgentSessionState Phase2)│
 │   app/domain/analysis_models.py   (AnalysisSession, …)  │
 │   app/domain/models.py            (AgentSession)        │
 │   app/domain/exceptions.py        (AgentError, …)       │
@@ -65,6 +70,15 @@ uv sync
 ```bash
 cp .env.example .env
 # Edit .env — set ANTHROPIC_API_KEY
+# Optionally set REDIS_URL=redis://localhost:6379/0 for persistent session memory
+```
+
+### 2a. (Optional) Start Redis
+
+```bash
+docker run -d -p 6379:6379 redis:7-alpine
+# Then add to .env: REDIS_URL=redis://localhost:6379/0
+# Without REDIS_URL, sessions are kept in-memory (single-process mode)
 ```
 
 ### 3. Generate sample data
@@ -195,11 +209,13 @@ Liveness probe — returns model and backend info.
 | `MAX_RETRIES` | `2` | API retry count |
 | `CODE_EXECUTION_BACKEND` | `subprocess` | `subprocess` or `jupyter` |
 | `CODE_EXECUTION_TIMEOUT` | `30` | Seconds before code execution timeout |
-| `MAX_REACT_ITERATIONS` | `20` | Max ReAct loop iterations |
+| `MAX_REACT_ITERATIONS` | `20` | Max tool-calling loop iterations |
+| `MAX_CONTEXT_MESSAGES` | `40` | Sliding window message cap |
 | `DATASETS_DIR` | `data/datasets` | Dataset search path |
 | `DOMAIN_DOCS_DIR` | `data/domain_docs` | Domain knowledge docs path |
 | `FIGURES_DIR` | `outputs/figures` | Figure output directory |
 | `NOTEBOOKS_DIR` | `outputs/notebooks` | Notebook output directory |
+| `REDIS_URL` | `None` | Redis connection URL (optional; in-memory fallback when unset) |
 
 ---
 
@@ -231,30 +247,27 @@ curl http://localhost:8001/health
 
 ---
 
-## ReAct Protocol
+## Native Tool-Calling Protocol
 
-The agent follows the **Thought → Action → Observation** loop:
+The agent uses **Anthropic's native Tool Calling API** — Claude selects tools by emitting `tool_use` content blocks, and the service dispatches them and returns `tool_result` blocks. No text parsing is involved.
 
 ```
-Thought: I need to understand the domain before analysing data.
-Action: list_domain_documents
-Action Input: {}
+User: "Analyze power_plant_data.csv"
 
-Observation: [{"file_name": "power_plant_thermodynamics.md", "size_bytes": 1842}]
+→ Claude emits tool_use: list_datasets({})
+← Service returns tool_result: [{"file_name": "power_plant_data.csv", ...}]
 
-Thought: Let me read the thermodynamics document first.
-Action: read_domain_document
-Action Input: {"file_name": "power_plant_thermodynamics.md"}
+→ Claude emits tool_use: inspect_dataset({"file_name": "power_plant_data.csv"})
+← Service returns tool_result: {"columns": [...], "sample": [...]}
 
-Observation: # Power Plant Thermodynamics ...
+→ Claude emits tool_use: execute_python_code({"code": "df['eff'].mean()"})
+← Service returns tool_result: "0.3673"
 
-...
-
-Thought: I have all the information needed.
-Final Answer: The mean thermal efficiency is 36.73% (range: 33.1%–40.2%).
+→ Claude emits stop_reason="end_turn"
+← Service returns: "The mean thermal efficiency is 36.73%"
 ```
 
-The full trace is returned in `react_trace` so you can inspect every reasoning step.
+The full `react_trace` (each tool call's thought + action + observation) is returned in the API response.
 
 ---
 
@@ -263,12 +276,15 @@ The full trace is returned in `react_trace` so you can inspect every reasoning s
 ```
 ai-agent-data-scientist/
 ├── app/
-│   ├── api/v1/
-│   │   ├── analysis.py        # POST /chat, GET figures/notebook
-│   │   └── datasets.py        # GET /datasets
+│   ├── api/
+│   │   ├── deps.py            # get_redis_client, get_memory_manager
+│   │   └── v1/
+│   │       ├── analysis.py    # POST /chat, GET figures/notebook
+│   │       └── datasets.py    # GET /datasets
 │   ├── core/
-│   │   └── config.py          # pydantic-settings
+│   │   └── config.py          # pydantic-settings (incl. REDIS_URL)
 │   ├── domain/
+│   │   ├── state_models.py    # AgentMessage, AgentSessionState (Phase 2)
 │   │   ├── analysis_models.py # AnalysisSession, DatasetMeta, etc.
 │   │   ├── exceptions.py      # AgentError hierarchy
 │   │   └── models.py          # AgentSession
@@ -276,14 +292,12 @@ ai-agent-data-scientist/
 │   │   ├── code_runner.py     # Subprocess + Jupyter backends
 │   │   ├── notebook_exporter.py
 │   │   └── unit_registry.py   # pint validation
-│   ├── schemas/
-│   │   ├── analysis.py        # Request/response Pydantic models
-│   │   └── datasets.py
 │   ├── services/
-│   │   ├── data_agent.py      # ReAct loop
+│   │   ├── context_manager.py # sliding window + cache injection
+│   │   ├── data_agent.py      # native tool-calling loop
 │   │   ├── data_tools.py      # Group B tools
 │   │   ├── knowledge_tools.py # Group A tools
-│   │   ├── memory.py          # Session stores
+│   │   ├── memory.py          # InMemoryStore + RedisMemoryManager
 │   │   └── tool_definitions.py # 15 tool JSON schemas
 │   └── main.py                # FastAPI app factory
 ├── data/
@@ -293,10 +307,11 @@ ai-agent-data-scientist/
 │   ├── figures/               # Saved PNG plots
 │   └── notebooks/             # Exported .ipynb files
 ├── scripts/
-│   ├── create_sample_data.py  # Generate sample datasets
-│   └── verify_install.py      # Dependency check
-├── tests/
+│   ├── create_sample_data.py
+│   └── verify_install.py
+├── tests/                     # 188 tests
 ├── .env.example
 ├── CLAUDE.md
+├── HANDBOOK.md
 └── pyproject.toml
 ```

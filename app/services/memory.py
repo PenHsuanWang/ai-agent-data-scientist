@@ -3,6 +3,9 @@
 Two separate stores:
   session_store         — for MVP AgentSession (unchanged)
   analysis_session_store — for new AnalysisSession (with TTL-based eviction)
+
+Redis-backed store:
+  RedisMemoryManager — async, stateless, 24 h TTL (Phase 2 refactor)
 """
 from __future__ import annotations
 
@@ -12,6 +15,7 @@ from typing import Callable
 
 from app.domain.analysis_models import AnalysisSession
 from app.domain.models import AgentSession
+from app.domain.state_models import AgentSessionState
 
 logger = logging.getLogger(__name__)
 
@@ -121,3 +125,77 @@ class AnalysisSessionStore:
 
 session_store = InMemorySessionStore()
 analysis_session_store = AnalysisSessionStore()
+
+
+# ──────────────────────────────────────────────────────────────────── #
+# Redis-backed memory manager (Phase 2 — stateless architecture)       #
+# ──────────────────────────────────────────────────────────────────── #
+
+
+class RedisMemoryManager:
+    """Async session store backed by Redis.
+
+    Implements the hydration / dehydration pattern:
+
+    * **Hydration** (``load_session``) — deserialise state from Redis.
+      Returns a fresh ``AgentSessionState`` when the key does not exist.
+    * **Dehydration** (``save_session``) — serialise state to Redis with a
+      rolling 24-hour TTL so idle sessions expire automatically.
+
+    Args:
+        redis_client: An async Redis client (``redis.asyncio.Redis``).
+        ttl_seconds: Session TTL in seconds.  Defaults to 86 400 (24 h).
+
+    Example::
+
+        from redis.asyncio import Redis
+        from app.services.memory import RedisMemoryManager
+
+        redis = Redis.from_url("redis://localhost:6379")
+        mgr = RedisMemoryManager(redis)
+
+        state = await mgr.load_session("session-abc")
+        state.add_user_message("hello")
+        await mgr.save_session(state)
+    """
+
+    _KEY_PREFIX = "agent:session:"
+
+    def __init__(self, redis_client: object, ttl_seconds: int = 86_400) -> None:
+        self._redis = redis_client
+        self._ttl = ttl_seconds
+
+    def _key(self, session_id: str) -> str:
+        return f"{self._KEY_PREFIX}{session_id}"
+
+    async def load_session(self, session_id: str) -> AgentSessionState:
+        """Retrieve and deserialise a session from Redis.
+
+        Returns a fresh ``AgentSessionState`` (with auto-populated timestamps)
+        when the key is absent or the TTL has expired.
+        """
+        from datetime import datetime, timezone
+
+        data: bytes | None = await self._redis.get(self._key(session_id))
+        if data:
+            return AgentSessionState.model_validate_json(data)
+        return AgentSessionState(session_id=session_id)
+
+    async def save_session(self, state: AgentSessionState) -> None:
+        """Serialise and persist the session with a rolling TTL.
+
+        Updates ``state.last_accessed`` to the current UTC time before
+        writing so callers always see an accurate timestamp on reload.
+        """
+        from datetime import datetime, timezone
+
+        state.last_accessed = datetime.now(timezone.utc)
+        await self._redis.setex(
+            self._key(state.session_id),
+            self._ttl,
+            state.model_dump_json(),
+        )
+        logger.debug(
+            "Saved session '%s' to Redis (TTL=%ds)", state.session_id, self._ttl
+        )
+

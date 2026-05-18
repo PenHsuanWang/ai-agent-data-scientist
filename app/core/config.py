@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # Seconds of inactivity before a session is eligible for GC.
     session_ttl_seconds: int = Field(3600, alias="SESSION_TTL_SECONDS")  # 1 hour
 
+    # ── Redis (optional — Phase 2 stateless memory) ────────────────── #
+    # When set, the RedisMemoryManager is used for AgentSessionState persistence.
+    # Leave unset to use the default in-memory stores.
+    redis_url: Optional[str] = Field(None, alias="REDIS_URL")
+
     # ── Output directories ─────────────────────────────────────────── #
     figures_dir: Path = Field(Path("outputs/figures"), alias="FIGURES_DIR")
     notebooks_dir: Path = Field(Path("outputs/notebooks"), alias="NOTEBOOKS_DIR")

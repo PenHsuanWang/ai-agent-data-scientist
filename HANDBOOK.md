@@ -11,21 +11,22 @@
 2. [Repository Layout](#2-repository-layout)
 3. [Architecture — Four Layers](#3-architecture--four-layers)
 4. [Domain Model](#4-domain-model)
-5. [The ReAct Reasoning Loop](#5-the-react-reasoning-loop)
-6. [The 16 Tools](#6-the-16-tools)
-7. [Code Execution Backends](#7-code-execution-backends)
-8. [Exception Hierarchy](#8-exception-hierarchy)
-9. [Exception Propagation Map](#9-exception-propagation-map)
-10. [16 Robustness Improvements (Gap Audit)](#10-16-robustness-improvements-gap-audit)
-11. [Session Lifecycle & TTL Eviction](#11-session-lifecycle--ttl-eviction)
-12. [Physical Unit Validation](#12-physical-unit-validation)
-13. [API Reference](#13-api-reference)
-14. [Configuration Reference](#14-configuration-reference)
-15. [Running the Service](#15-running-the-service)
-16. [Test Strategy & Coverage](#16-test-strategy--coverage)
-17. [Adding a New Tool](#17-adding-a-new-tool)
-18. [Adding a New Exception](#18-adding-a-new-exception)
-19. [Operational Runbook](#19-operational-runbook)
+5. [The Native Tool-Calling Loop](#5-the-native-tool-calling-loop)
+6. [Memory Architecture (Phase 2)](#6-memory-architecture-phase-2)
+7. [The 15 Tools](#7-the-15-tools)
+8. [Code Execution Backends](#8-code-execution-backends)
+9. [Exception Hierarchy](#9-exception-hierarchy)
+10. [Exception Propagation Map](#10-exception-propagation-map)
+11. [16 Robustness Improvements (Gap Audit)](#11-16-robustness-improvements-gap-audit)
+12. [Session Lifecycle & TTL Eviction](#12-session-lifecycle--ttl-eviction)
+13. [Physical Unit Validation](#13-physical-unit-validation)
+14. [API Reference](#14-api-reference)
+15. [Configuration Reference](#15-configuration-reference)
+16. [Running the Service](#16-running-the-service)
+17. [Test Strategy & Coverage](#17-test-strategy--coverage)
+18. [Adding a New Tool](#18-adding-a-new-tool)
+19. [Adding a New Exception](#19-adding-a-new-exception)
+20. [Operational Runbook](#20-operational-runbook)
 
 ---
 
@@ -37,14 +38,15 @@ This project is a **domain-aware Data Scientist AI Agent** built on:
 |-----------|-----------|
 | Web framework | FastAPI 0.115+ |
 | LLM | Anthropic Claude (SDK `AsyncAnthropic`) |
-| Reasoning protocol | ReAct (Reason + Act) text loop |
+| Reasoning protocol | **Anthropic native Tool Calling** (JSON schema, `tool_use`/`tool_result`) |
 | Code execution | subprocess (default) or Jupyter kernel |
 | Physical validation | `pint` unit registry |
 | Notebook export | `nbformat` |
+| Session store | In-memory (default) or **Redis** (`RedisMemoryManager`) |
 | Configuration | `pydantic-settings` v2 with `.env` |
 | Python version | 3.12+ |
 
-**Core value proposition:** The agent can answer data science questions that require reading domain documents, loading datasets, executing Python code, generating plots, and validating physical quantities (e.g., thermal efficiency must be 0–100 %).
+**Core value proposition:** The agent can answer data science questions that require reading domain documents, loading datasets, executing Python code, generating plots, and validating physical quantities (e.g., thermal efficiency must be 0–100 %).  The architecture is designed for progressive upgrade from a single-process deployment to a fully stateless multi-worker cluster backed by Redis.
 
 ---
 
@@ -54,26 +56,29 @@ This project is a **domain-aware Data Scientist AI Agent** built on:
 ai-agent-data-scientist/
 ├── app/
 │   ├── api/
+│   │   ├── deps.py                # get_redis_client(), get_memory_manager() Depends factories
 │   │   └── v1/
 │   │       ├── analysis.py        # POST /chat, GET /figures, GET /notebook
 │   │       └── datasets.py        # GET /datasets listing
 │   ├── core/
-│   │   └── config.py              # pydantic-settings Settings singleton
+│   │   └── config.py              # pydantic-settings Settings singleton (incl. REDIS_URL)
 │   ├── domain/
 │   │   ├── analysis_models.py     # AnalysisSession, DatasetMeta, AnalysisResult, PhysicalUnit
 │   │   ├── exceptions.py          # Full exception hierarchy (zero external deps)
-│   │   └── models.py              # AgentSession base (legacy MVP)
+│   │   ├── models.py              # AgentSession base (legacy MVP)
+│   │   └── state_models.py        # AgentMessage + AgentSessionState (Pydantic, Phase 2)
 │   ├── infrastructure/
 │   │   ├── code_runner.py         # SubprocessCodeRunner, JupyterKernelManager, factory
 │   │   ├── notebook_exporter.py   # nbformat-based .ipynb writer
 │   │   ├── style_config.py        # STYLE_PREAMBLE injected before user code
 │   │   └── unit_registry.py       # pint registry + 13 domain quantity ranges
 │   ├── services/
-│   │   ├── data_agent.py          # DataScienceAgentService — ReAct loop orchestrator
+│   │   ├── context_manager.py     # optimize_context_window() — sliding window + cache injection
+│   │   ├── data_agent.py          # DataScienceAgentService — native tool-calling loop
 │   │   ├── data_tools.py          # Group B: 6 execution tools (session-stateful)
 │   │   ├── knowledge_tools.py     # Group A: 7 knowledge tools (read-only, pure)
-│   │   ├── memory.py              # InMemorySessionStore, AnalysisSessionStore (TTL)
-│   │   └── tool_definitions.py    # 16 JSON schemas for TOOL_DEFINITIONS
+│   │   ├── memory.py              # InMemorySessionStore, AnalysisSessionStore, RedisMemoryManager
+│   │   └── tool_definitions.py    # 15 JSON schemas for TOOL_DEFINITIONS
 │   └── main.py                    # FastAPI app factory, lifespan, GC background task
 ├── data/
 │   ├── datasets/                  # CSV / Parquet / Excel datasets
@@ -83,14 +88,21 @@ ai-agent-data-scientist/
 │   └── notebooks/                 # Exported .ipynb files
 ├── tests/
 │   ├── conftest.py                # Shared fixtures, Anthropic exception builders
-│   ├── domain/test_exceptions.py
+│   ├── domain/
+│   │   ├── test_exceptions.py
+│   │   └── test_state_models.py   # TC-DOM-01/02/03 — AgentMessage, AgentSessionState
 │   ├── services/
-│   │   ├── test_memory.py
+│   │   ├── test_memory.py         # In-memory store TTL/eviction tests
+│   │   ├── test_redis_memory.py   # TC-MEM-01/02/03 — RedisMemoryManager (fakeredis)
+│   │   ├── test_context_manager.py # TC-CTX-01/02/03 — sliding window + cache injection
+│   │   ├── test_native_tool_agent.py # TC-AGT-01/02/03 — parallel tool calling
 │   │   ├── test_knowledge_tools.py
 │   │   ├── test_data_tools.py
 │   │   └── test_data_agent.py
 │   ├── infrastructure/test_code_runner.py
-│   └── api/test_analysis.py
+│   └── api/
+│       ├── test_analysis.py       # LLM error → HTTP status, figure corruption
+│       └── test_v1_analysis.py    # TC-API-01/02 — react_trace, DI integrity
 ├── scripts/
 │   ├── create_sample_data.py
 │   └── verify_install.py
@@ -105,14 +117,17 @@ ai-agent-data-scientist/
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Presentation  (app/api/v1/)                            │
+│  Presentation  (app/api/v1/, app/api/deps.py)           │
 │  FastAPI routers — HTTP ↔ domain object translation     │
 │  Exception → HTTP status code mapping                   │
+│  get_memory_manager() / get_redis_client() Depends      │
 ├─────────────────────────────────────────────────────────┤
 │  Application   (app/services/)                          │
-│  DataScienceAgentService — ReAct loop, tool dispatch    │
-│  AnalysisSessionStore — in-memory session with TTL      │
-│  16 tools in knowledge_tools.py + data_tools.py         │
+│  DataScienceAgentService — native tool-calling loop     │
+│  RedisMemoryManager — async Redis session store         │
+│  AnalysisSessionStore — in-memory store with TTL        │
+│  context_manager — sliding window + prompt caching      │
+│  15 tools in knowledge_tools.py + data_tools.py         │
 ├─────────────────────────────────────────────────────────┤
 │  Infrastructure  (app/infrastructure/)                  │
 │  CodeRunner (subprocess / Jupyter / Anthropic)          │
@@ -120,6 +135,7 @@ ai-agent-data-scientist/
 │  NotebookExporter (nbformat)                            │
 ├─────────────────────────────────────────────────────────┤
 │  Domain  (app/domain/)                                  │
+│  AgentSessionState, AgentMessage (Pydantic — Phase 2)   │
 │  AnalysisSession, DatasetMeta, AnalysisResult           │
 │  PhysicalUnit, NotebookCell                             │
 │  Full exception hierarchy — ZERO external imports       │
@@ -132,7 +148,27 @@ ai-agent-data-scientist/
 
 ## 4. Domain Model
 
-### `AnalysisSession` (aggregate root)
+### `AgentSessionState` (Phase 2 — Redis-serialisable)
+
+```python
+class AgentSessionState(BaseModel):
+    session_id: str
+    created_at: datetime            # UTC, auto-populated
+    last_accessed: datetime         # UTC, updated by RedisMemoryManager on save
+    messages: list[AgentMessage]    # Anthropic-format conversation history
+    total_tokens_used: int          # cumulative token count
+```
+
+`AgentMessage` wraps a single turn:
+```python
+class AgentMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str | list[dict[str, Any]]   # plain string OR structured blocks
+```
+
+`AgentSessionState` is **fully serialisable via `model_dump_json()` / `model_validate_json()`** and is the contract stored in Redis. It provides the same helper methods as the legacy `AgentSession`: `add_user_message`, `add_assistant_message`, `add_tool_results`.
+
+### `AnalysisSession` (domain aggregate — in-memory)
 
 ```python
 @dataclass
@@ -146,12 +182,9 @@ class AnalysisSession(AgentSession):
     notebook_path: str | None
 ```
 
-**Mutation helpers** (all inside the session class):
-- `register_dataset(meta)` — keyed by `meta.file_name`
-- `register_figure(figure_id, b64_png)` — enforces non-empty
-- `append_react_step(thought, action, observation)` — append-only trace
-- `log_unit_validation(unit)` — appends `PhysicalUnit`
-- `append_notebook_cell(cell)`
+`AnalysisSession` is the **current live aggregate** used by `DataScienceAgentService`. Its `messages` list is the Anthropic-compatible chat history. The `react_trace` is built incrementally by `_run_loop()` as tool calls are dispatched.
+
+**Mutation helpers:** `register_dataset`, `register_figure`, `append_react_step`, `log_unit_validation`, `append_notebook_cell`.
 
 ### `DatasetMeta` (frozen value object)
 
@@ -163,28 +196,13 @@ Invariants enforced in `__post_init__`: `rows >= 0`, `columns >= 0`, `file_name`
 
 ### Message History (`session.messages`)
 
-The `messages` list is the Anthropic-compatible chat history passed to `_client.messages.create(…)`. It grows with every `add_user_message` / `add_assistant_message` call. On LLM API error it is **rolled back** to a checkpoint taken before the call (see §10 Gap 2).
+The `messages` list is the Anthropic-compatible chat history passed to `_client.messages.create(…)`. It grows with every `add_user_message` / `add_assistant_message` call. On LLM API error it is **rolled back** to a checkpoint taken before the call.
 
 ---
 
-## 5. The ReAct Reasoning Loop
+## 5. The Native Tool-Calling Loop
 
-### Text Protocol
-
-Claude is instructed to emit **one of two formats** per response:
-
-**Action format:**
-```
-Thought: <reasoning about what to do next>
-Action: <tool_name>
-Action Input: {"param": "value"}
-```
-
-**Final answer format:**
-```
-Thought: <final reasoning>
-Final Answer: <complete answer to the user>
-```
+The agent uses **Anthropic's native Tool Calling API** (JSON schema `tools=` parameter) rather than a regex-based ReAct text protocol. This eliminates parsing fragility and is the recommended production pattern.
 
 ### Loop Lifecycle (per `run()` call)
 
@@ -199,31 +217,44 @@ run(session, user_message)
    │
    └─ for iteration in range(MAX_REACT_ITERATIONS):
       │
-      ├─ _call_claude_with_retry(session, system_prompt)
-      │   ├─ OK  → raw_text
+      ├─ _apply_sliding_window(messages)        ← trim to MAX_CONTEXT_MESSAGES
+      │
+      ├─ _call_claude_with_retry(session)
+      │   ├─ system=_CACHED_SYSTEM              ← ephemeral cache_control
+      │   ├─ tools=_CACHED_TOOLS                ← cache_control on last tool
       │   └─ Exc → LLMAuthenticationError | LLMContextOverflowError | LLMAPIError
       │              (raised → propagates to run() → ROLLBACK → re-raise)
       │
-      ├─ _parse_react(raw_text)
-      │   ├─ {"type": "final_answer"} → return answer ✓
-      │   ├─ {"type": "action"}       → dispatch tool
-      │   └─ {"type": "parse_error"}
-      │       ├─ count < 3 → inject correction message, continue
-      │       └─ count >= 3 → raise ReActLoopError (NO rollback)
+      ├─ stop_reason == "end_turn"
+      │   └─ extract text answer
+      │      session.append_react_step(action="Final Answer", ...)
+      │      return answer ✓
       │
-      ├─ tool_registry[action_name](action_input)
-      │   ├─ OK  → observation string
-      │   └─ Exception → caught here → observation = "Error: …"
+      └─ stop_reason == "tool_use"
+          ├─ for each tool_use block:
+          │   ├─ handler = tool_registry.get(block.name)
+          │   ├─ observation = handler(block.input)   ← or "Error: …" on exception
+          │   └─ session.append_react_step(thought, action, observation)
+          │
+          └─ session.add_tool_results([{tool_result …}, …])
+             → continue loop
       │
-      └─ session.add_assistant_message + session.add_user_message(observation)
-         session.append_react_step(thought, action, observation)
+      └─ unexpected stop_reason → raise ReActLoopError("__unexpected_stop__")
    │
-   └─ raise ReActMaxIterationsError (MAX_REACT_ITERATIONS exhausted)
+   └─ raise ReActLoopError (MAX_REACT_ITERATIONS exhausted)
 ```
 
-### Parse Error Sentinel
+### Prompt Caching
 
-Every parse failure is recorded in `react_trace` with `action="__parse_error__"`. This distinguishes genuine tool calls from protocol failures when inspecting the trace later.
+Two static blocks are marked `cache_control: {type: ephemeral}`:
+- `_CACHED_SYSTEM` — the system prompt text block
+- `_CACHED_TOOLS` — the last entry in `TOOL_DEFINITIONS`
+
+This instructs Anthropic to cache the tool schema prefix and system prompt across requests, significantly reducing input-token cost and latency for long sessions.
+
+### Sliding Window
+
+`_apply_sliding_window(messages, max_total)` is called **before every API call**. It retains the most recent `MAX_CONTEXT_MESSAGES` (default 40) messages. After trimming it advances past any leading assistant turn to satisfy the Anthropic invariant that message histories must start with a user role.
 
 ### Rollback Semantics
 
@@ -233,11 +264,91 @@ Every parse failure is recorded in `react_trace` with `action="__parse_error__"`
 | `LLMContextOverflowError` | ✅ Yes | History is too long; user must start new session |
 | `LLMAPIError` (generic) | ✅ Yes | Transient error; partial state would be inconsistent |
 | `ReActLoopError` | ❌ No | Partial trace is valuable for debugging |
-| `ReActMaxIterationsError` | ❌ No | Same as above |
 
 ---
 
-## 6. The 16 Tools
+## 6. Memory Architecture (Phase 2)
+
+### Overview
+
+The Phase 2 memory refactor introduces a **stateless session management** pattern. All conversational state is serialised to Redis, making the FastAPI application layer hold zero in-memory session data. This enables horizontal scaling across multiple workers.
+
+```
+Request arrives
+│
+├─ RedisMemoryManager.load_session(session_id)   ← Hydration
+│     redis.get("agent:session:{id}") → AgentSessionState
+│     (or fresh AgentSessionState if key missing)
+│
+├─ run_agent_loop(state, user_input)
+│     optimize_context_window(state.messages)
+│     → call Claude API
+│     → dispatch tools
+│     → append messages
+│
+└─ RedisMemoryManager.save_session(state)         ← Dehydration
+      state.last_accessed = now()
+      redis.setex("agent:session:{id}", 86400, state.model_dump_json())
+```
+
+### `RedisMemoryManager` (`app/services/memory.py`)
+
+| Method | Behaviour |
+|--------|-----------|
+| `load_session(session_id)` | Deserialise from Redis. Returns fresh `AgentSessionState` if key absent. Never raises. |
+| `save_session(state)` | Updates `last_accessed` to UTC now; calls `SETEX` with TTL. |
+
+Key format: `agent:session:{session_id}`. Default TTL: **86 400 s (24 h)** — configurable via constructor.
+
+### `optimize_context_window()` (`app/services/context_manager.py`)
+
+Public API for context preparation. Combines two operations:
+
+1. **Sliding window** — retains the `max_history` most recent messages (default 20). Ensures the result starts with a `"user"` message.
+2. **Ephemeral cache injection** — wraps the two most-recent user messages in a list block with `cache_control: {type: ephemeral}`, enabling Anthropic KV-cache reuse for the conversation history.
+
+Returns a `list[dict]` ready to pass to `AsyncAnthropic().messages.create(messages=...)`.
+
+### `AgentSessionState` Pydantic Contract (`app/domain/state_models.py`)
+
+Strict Pydantic v2 model. Designed for serialisation round-trips:
+
+```python
+# Dehydration (to Redis)
+json_str = state.model_dump_json()
+
+# Hydration (from Redis)
+state = AgentSessionState.model_validate_json(json_str)
+```
+
+`AgentMessage.role` is validated as `Literal["user", "assistant", "system"]` — any other value raises `ValidationError`.
+
+### FastAPI Dependency Injection (`app/api/deps.py`)
+
+```python
+from app.api.deps import get_memory_manager, get_redis_client
+
+@router.post("/chat")
+async def chat(
+    req: ChatRequest,
+    redis = Depends(get_redis_client),
+):
+    mgr = await get_memory_manager(redis_client=redis)
+    if mgr:
+        state = await mgr.load_session(req.session_id)
+        ...
+        await mgr.save_session(state)
+```
+
+When `REDIS_URL` is unset, `get_redis_client()` yields `None` and `get_memory_manager()` returns `None`, allowing the application to run with the in-memory `AnalysisSessionStore` unchanged.
+
+### Coexistence with In-Memory Stores
+
+`InMemorySessionStore` and `AnalysisSessionStore` remain in `memory.py` and are used by the existing `analysis.py` router as before.  `RedisMemoryManager` is **additive** — it coexists alongside the in-memory stores and is adopted when `REDIS_URL` is configured.
+
+---
+
+## 7. The 15 Tools
 
 Tools are registered in `DataScienceAgentService._build_tool_registry()`. All tool functions return `str`. **They never raise** — errors are returned as `"Error: ..."` strings so Claude can self-correct.
 
@@ -276,7 +387,7 @@ Tools are registered in `DataScienceAgentService._build_tool_registry()`. All to
 
 ---
 
-## 7. Code Execution Backends
+## 8. Code Execution Backends
 
 ### Selection
 
@@ -309,7 +420,7 @@ Tools are registered in `DataScienceAgentService._build_tool_registry()`. All to
 
 ---
 
-## 8. Exception Hierarchy
+## 9. Exception Hierarchy
 
 ```
 Exception
@@ -346,7 +457,7 @@ Exception
 
 ---
 
-## 9. Exception Propagation Map
+## 10. Exception Propagation Map
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -403,7 +514,7 @@ Figure base64 decoding (GET /figures/{figure_id}):
 
 ---
 
-## 10. Sixteen Robustness Improvements (Gap Audit)
+## 11. Sixteen Robustness Improvements (Gap Audit)
 
 These were identified by auditing the original codebase against expected production behaviour. Each gap has a corresponding test.
 
@@ -428,7 +539,7 @@ These were identified by auditing the original codebase against expected product
 
 ---
 
-## 11. Session Lifecycle & TTL Eviction
+## 12. Session Lifecycle & TTL Eviction
 
 ### Session creation and access
 
@@ -466,7 +577,7 @@ POST /api/v1/analysis/chat
 
 ---
 
-## 12. Physical Unit Validation
+## 13. Physical Unit Validation
 
 ### Domain ranges
 
@@ -498,7 +609,7 @@ Claude is instructed to always call `validate_physical_units` after computing ef
 
 ---
 
-## 13. API Reference
+## 14. API Reference
 
 ### `POST /api/v1/analysis/chat`
 
@@ -551,7 +662,7 @@ Returns the `.ipynb` file as `application/x-ipynb+json`. **404** if notebook not
 
 ---
 
-## 14. Configuration Reference
+## 15. Configuration Reference
 
 All settings are in `app/core/config.py` and read from `.env` (or environment variables).
 
@@ -569,12 +680,14 @@ All settings are in `app/core/config.py` and read from `.env` (or environment va
 | `datasets_dir` | `DATASETS_DIR` | `"data/datasets"` | Dataset files |
 | `code_execution_backend` | `CODE_EXECUTION_BACKEND` | `"subprocess"` | `subprocess` \| `jupyter` \| `anthropic` |
 | `code_execution_timeout` | `CODE_EXECUTION_TIMEOUT` | `30` | Seconds before subprocess kill |
-| `max_react_iterations` | `MAX_REACT_ITERATIONS` | `20` | ReAct loop iteration cap |
+| `max_react_iterations` | `MAX_REACT_ITERATIONS` | `20` | Tool-calling loop iteration cap |
+| `max_context_messages` | `MAX_CONTEXT_MESSAGES` | `40` | Sliding window cap (messages) |
 | `cors_origins` | `CORS_ORIGINS` | `["http://localhost:3000","http://localhost:8001"]` | JSON array of allowed origins |
 | `max_dataset_bytes` | `MAX_DATASET_BYTES` | `209715200` (200 MB) | File size limit for dataset tools |
 | `session_ttl_seconds` | `SESSION_TTL_SECONDS` | `3600` | Idle session expiry |
 | `figures_dir` | `FIGURES_DIR` | `"outputs/figures"` | Saved PNG destination |
 | `notebooks_dir` | `NOTEBOOKS_DIR` | `"outputs/notebooks"` | Exported .ipynb destination |
+| `redis_url` | `REDIS_URL` | `None` | Redis connection URL (optional; in-memory fallback when unset) |
 
 **Minimal `.env`:**
 ```ini
@@ -587,16 +700,18 @@ APP_ENV=production
 DEBUG=false
 CLAUDE_MODEL=claude-sonnet-4-6
 MAX_REACT_ITERATIONS=20
+MAX_CONTEXT_MESSAGES=40
 CODE_EXECUTION_BACKEND=subprocess
 CODE_EXECUTION_TIMEOUT=60
 MAX_DATASET_BYTES=209715200
 SESSION_TTL_SECONDS=1800
 CORS_ORIGINS=["https://app.example.com"]
+REDIS_URL=redis://redis:6379/0
 ```
 
 ---
 
-## 15. Running the Service
+## 16. Running the Service
 
 ### Install
 
@@ -635,7 +750,7 @@ python scripts/verify_install.py
 ANTHROPIC_API_KEY=sk-ant-test123 uv run --extra dev pytest tests/ --tb=short -q
 ```
 
-**Current baseline:** 120 tests, 0 failures.
+**Current baseline:** 188 tests, 0 failures.
 
 ### Run with coverage
 
@@ -651,7 +766,7 @@ uv run --extra dev ruff check app/ tests/
 
 ---
 
-## 16. Test Strategy & Coverage
+## 17. Test Strategy & Coverage
 
 Tests follow the **AAA (Arrange-Act-Assert)** pattern. Class names describe the unit under test; method names describe the behaviour being verified.
 
@@ -661,12 +776,17 @@ Tests follow the **AAA (Arrange-Act-Assert)** pattern. Class names describe the 
 |------|--------------------|----------------|
 | `conftest.py` | Shared fixtures | `anthropic_auth_error`, `anthropic_context_overflow_error`, etc. factory fixtures; `make_claude_response()` helper |
 | `domain/test_exceptions.py` | Hierarchy, attributes, messages | `issubclass`, `isinstance`, `str(exc)` checks |
+| `domain/test_state_models.py` | TC-DOM-01/02/03 — `AgentMessage`, `AgentSessionState` | Pydantic v2 `ValidationError`, round-trip `model_dump_json()` |
 | `services/test_memory.py` | Gaps 5, 15 — TTL, eviction, callback | `AnalysisSessionStore(ttl_seconds=1)` + `time.sleep(1.1)` for fast expiry |
+| `services/test_redis_memory.py` | TC-MEM-01/02/03 — `RedisMemoryManager` | `fakeredis.aioredis.FakeRedis`; TTL verified with `redis.ttl(key)` |
+| `services/test_context_manager.py` | TC-CTX-01/02/03 — `optimize_context_window` | Sliding window trim; `cache_control` injection on last 2 user messages |
+| `services/test_native_tool_agent.py` | TC-AGT-01/02/03 — parallel tool calling | 2 `tool_use` blocks → 1 user message with 2 `tool_result` blocks |
 | `services/test_knowledge_tools.py` | Gaps 4, 10 — size guard, stat fallback | `tmp_path`, `patch("…settings")`, `MagicMock(spec=Path)` for stat error |
 | `services/test_data_tools.py` | Gap 7 — `get_figure` metadata-only | Direct session fixture; assert `"data" not in result` |
 | `services/test_data_agent.py` | Gaps 1, 2, 3, 16 — classify, rollback, sentinel | `patch("app.services.data_agent._client")` with `AsyncMock` |
 | `infrastructure/test_code_runner.py` | Gaps 8, 9, 13 — factory, limits, probe | `CodeRunnerFactory.create()` with bad backend; `JupyterKernelManager` with mocked `_start` |
 | `api/test_analysis.py` | Gaps 1, 3, 6, 12 — HTTP codes, preload | `httpx.AsyncClient(transport=ASGITransport(app))` without lifespan |
+| `api/test_v1_analysis.py` | TC-API-01/02 — react_trace schema, DI integrity | Full HTTP stack with mocked Anthropic response |
 
 ### Anthropic exception builders
 
@@ -683,11 +803,13 @@ async def test_auth_error(agent, session, anthropic_auth_error):
 
 ### Mocking the module-level `_client`
 
-The `AsyncAnthropic` client is instantiated at module import time as `_client`. Patch it as:
+The `AsyncAnthropic` client is instantiated at module import time as `_client`. The agent uses **native tool calling** (`tools=` parameter, `tool_use` stop reason). Patch it as:
 
 ```python
 with patch("app.services.data_agent._client") as mock_client:
-    mock_client.messages.create = AsyncMock(return_value=make_claude_response("Final Answer: 42"))
+    mock_client.messages.create = AsyncMock(return_value=make_claude_tool_response(
+        "list_datasets", {}, "tool-1"
+    ))
 ```
 
 ### Async tests
@@ -700,7 +822,7 @@ with patch("app.services.data_agent._client") as mock_client:
 
 ---
 
-## 17. Adding a New Tool
+## 18. Adding a New Tool
 
 1. **Implement** the function in `knowledge_tools.py` (read-only, pure) or `data_tools.py` (stateful, takes `session` and/or `runner`).  
    - Return type: always `str`  
@@ -720,7 +842,7 @@ with patch("app.services.data_agent._client") as mock_client:
 
 ---
 
-## 18. Adding a New Exception
+## 19. Adding a New Exception
 
 1. Add the class to `app/domain/exceptions.py` only. Zero external imports allowed.
 2. Inherit from the most specific existing parent (`AgentError` → specific subclass).
@@ -744,7 +866,7 @@ class MyNewError(AgentError):
 
 ---
 
-## 19. Operational Runbook
+## 20. Operational Runbook
 
 ### Invalid API key at startup
 
@@ -823,4 +945,4 @@ class MyNewError(AgentError):
 
 ---
 
-*Last updated: 2026-05-16 by the engineering team.*
+*Last updated: 2026-05-20 by the engineering team.*
