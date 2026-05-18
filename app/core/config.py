@@ -42,8 +42,11 @@ class Settings(BaseSettings):
     code_execution_timeout: int = Field(30, alias="CODE_EXECUTION_TIMEOUT")
     enable_jupyter_bridge: bool = Field(False, alias="ENABLE_JUPYTER_BRIDGE")
 
-    # ── ReAct loop ─────────────────────────────────────────────────── #
+    # ── Tool-calling loop ──────────────────────────────────────────── #
     max_react_iterations: int = Field(20, alias="MAX_REACT_ITERATIONS")
+    # Maximum number of messages kept in a session before the sliding window
+    # trims the oldest turns.  40 = ~20 tool-call rounds, well within context.
+    max_context_messages: int = Field(40, alias="MAX_CONTEXT_MESSAGES")
 
     # ── CORS ───────────────────────────────────────────────────────── #
     # JSON array of allowed origins; e.g. '["https://app.example.com"]'

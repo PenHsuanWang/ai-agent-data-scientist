@@ -1,23 +1,21 @@
-"""DataScienceAgentService — ReAct reasoning loop.
+"""DataScienceAgentService — Anthropic native Tool Calling loop.
 
-Implements the Thought → Action → Observation protocol:
-1. Build system prompt with available tools and domain context.
-2. Call Claude API with the full message history.
-3. Parse Claude's text response for Thought/Action/Action Input OR Final Answer.
-4. Dispatch Action to the tool registry.
-5. Append Observation to the session and loop.
-6. Terminate on Final Answer or MAX_REACT_ITERATIONS.
+Implements the tool-use loop driven by the Anthropic SDK:
+1. Call Claude API with cached system prompt and TOOL_DEFINITIONS via tools= param.
+2. If stop_reason == "tool_use": dispatch each tool_use block, collect tool_results.
+3. Append tool_result user message and loop.
+4. If stop_reason == "end_turn": return the text answer.
+5. Apply a sliding window before each call to prevent context overflow.
 """
 from __future__ import annotations
 
-import ast
 import json
 import logging
-import re
 import uuid
 from typing import Any, Callable
 
 from anthropic import AsyncAnthropic
+from anthropic.types import Message
 
 from app.core.config import settings
 from app.domain.analysis_models import AnalysisSession, PhysicalUnit
@@ -26,7 +24,6 @@ from app.domain.exceptions import (
     LLMAuthenticationError,
     LLMContextOverflowError,
     ReActLoopError,
-    ReActParseError,
 )
 from app.infrastructure.code_runner import CodeRunner, CodeRunnerFactory
 from app.infrastructure.unit_registry import (
@@ -56,104 +53,10 @@ from app.services.tool_definitions import TOOL_DEFINITIONS
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────── #
-# ReAct regex patterns                                                   #
+# System prompt (cached — static across all calls)                       #
 # ──────────────────────────────────────────────────────────────────── #
 
-_THOUGHT_RE = re.compile(
-    r"Thought:\s*(.+?)(?=Action:|Final Answer:|$)",
-    re.DOTALL | re.IGNORECASE,
-)
-_ACTION_RE = re.compile(r"Action:\s*([a-z_][a-z0-9_]*)", re.IGNORECASE)
-_ACTION_INPUT_RE = re.compile(r"Action Input:\s*(\{.*\})\s*$", re.DOTALL)
-_FINAL_ANSWER_RE = re.compile(r"Final Answer:\s*(.+)", re.DOTALL | re.IGNORECASE)
-
-
-def _parse_react(text: str) -> dict[str, Any]:
-    """Parse a Claude response into a structured ReAct dict.
-
-    Returns one of:
-      {"type": "final_answer", "thought": str, "answer": str}
-      {"type": "action", "thought": str, "action": str, "action_input": dict}
-      {"type": "parse_error", "raw": str, "reason": str}
-    """
-    thought_m = _THOUGHT_RE.search(text)
-    thought = thought_m.group(1).strip() if thought_m else ""
-
-    # Final answer path
-    final_m = _FINAL_ANSWER_RE.search(text)
-    if final_m:
-        return {
-            "type": "final_answer",
-            "thought": thought,
-            "answer": final_m.group(1).strip(),
-        }
-
-    # Action path
-    action_m = _ACTION_RE.search(text)
-    if not action_m:
-        # No action found — treat entire text as thought, signal parse error
-        return {
-            "type": "parse_error",
-            "raw": text,
-            "reason": "No 'Action:' or 'Final Answer:' found in Claude's response.",
-        }
-
-    action_name = action_m.group(1).strip()
-
-    # Extract JSON input
-    input_m = _ACTION_INPUT_RE.search(text)
-    if input_m:
-        raw_input = input_m.group(1).strip()
-        try:
-            action_input = json.loads(raw_input)
-        except json.JSONDecodeError:
-            # Fallback: try ast.literal_eval for Python-dict-style strings
-            try:
-                action_input = ast.literal_eval(raw_input)
-            except Exception:
-                return {
-                    "type": "parse_error",
-                    "raw": text,
-                    "reason": f"Action Input is not valid JSON: {raw_input[:200]}",
-                }
-    else:
-        action_input = {}
-
-    return {
-        "type": "action",
-        "thought": thought,
-        "action": action_name,
-        "action_input": action_input,
-    }
-
-
-# ──────────────────────────────────────────────────────────────────── #
-# System prompt builder                                                  #
-# ──────────────────────────────────────────────────────────────────── #
-
-_TOOL_SUMMARY = "\n".join(
-    f"- **{t['name']}**: {t['description'].split('.')[0]}"
-    for t in TOOL_DEFINITIONS
-)
-
-_SYSTEM_PROMPT_TEMPLATE = """You are an expert Data Scientist AI Agent. Your task is to answer questions about datasets by reasoning step-by-step and using the available tools.
-
-## Available Tools
-
-{tool_summary}
-
-## Instructions
-
-Always follow this exact format for EVERY response:
-
-Thought: <your reasoning about what to do next>
-Action: <tool_name>
-Action Input: {{"param": "value"}}
-
-When you have enough information to answer the user's question:
-
-Thought: <final reasoning>
-Final Answer: <your complete, well-reasoned answer to the user>
+_SYSTEM_PROMPT_TEXT = """You are an expert Data Scientist AI Agent specialising in physical process analysis.
 
 ## Workflow Rules
 
@@ -162,17 +65,16 @@ Final Answer: <your complete, well-reasoned answer to the user>
 3. ALWAYS validate physical quantities (efficiency, temperature, pressure, power) using validate_physical_units.
 4. If a computed result is outside expected ranges, investigate before reporting it.
 5. If a tool returns an error, read the message carefully and try to correct your approach.
-6. Keep Action Input as valid JSON with double quotes.
 
 ## Code Generation Rules
 
-7. Use print() in execute_python_code — never rely on expression evaluation.
-8. Load datasets: pd.read_csv('data/datasets/<file>') or pd.read_parquet(...)
-9. Use the pre-configured helpers from the style preamble: COLORS, PALETTE, C_GOOD, C_WARN, C_BAD,
+6. Use print() in execute_python_code — never rely on expression evaluation.
+7. Load datasets: pd.read_csv('data/datasets/<file>') or pd.read_parquet(...)
+8. Use the pre-configured helpers from the style preamble: COLORS, PALETTE, C_GOOD, C_WARN, C_BAD,
    label_bars(), add_reference_line(), format_axis_units(), engineering_plot().
-10. Every plot MUST have: xlabel with unit, ylabel with unit, title, plt.show().
-11. Use descriptive variable names — no single letters except loop indices.
-12. Add a section header print() before each analysis step.
+9. Every plot MUST have: xlabel with unit, ylabel with unit, title, plt.show().
+10. Use descriptive variable names — no single letters except loop indices.
+11. Add a section header print() before each analysis step.
 
 ## Physical Validation Reminder
 
@@ -182,16 +84,88 @@ Always check your results make physical sense before presenting them.
 
 ## Reporting Standard
 
-End every Final Answer with a structured summary:
+End every response with a structured summary:
 - Dataset, shape, key metric with units
 - Physical validation status (✅ or ⚠)
 - Any anomalies detected
 - Recommendation if applicable
 """
 
+# Prompt caching: the static system block is marked ephemeral so Anthropic
+# can reuse the KV cache across requests, reducing input-token cost and latency.
+_CACHED_SYSTEM: list[dict[str, Any]] = [
+    {
+        "type": "text",
+        "text": _SYSTEM_PROMPT_TEXT,
+        "cache_control": {"type": "ephemeral"},
+    }
+]
 
-def _build_system_prompt() -> str:
-    return _SYSTEM_PROMPT_TEMPLATE.format(tool_summary=_TOOL_SUMMARY)
+
+def _build_cached_tools() -> list[dict[str, Any]]:
+    """Return TOOL_DEFINITIONS with cache_control on the last entry.
+
+    Placing cache_control on the final tool definition tells Anthropic to
+    cache the entire tools prefix up to that point, eliminating repeated
+    token processing for the static schema block.
+    """
+    tools: list[dict[str, Any]] = list(TOOL_DEFINITIONS)
+    last = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+    return tools[:-1] + [last]
+
+
+_CACHED_TOOLS: list[dict[str, Any]] = _build_cached_tools()
+
+# ──────────────────────────────────────────────────────────────────── #
+# Helpers                                                                #
+# ──────────────────────────────────────────────────────────────────── #
+
+
+def _content_to_dict(content_blocks: list) -> list[dict[str, Any]]:
+    """Convert Anthropic SDK content blocks to serialisable dicts."""
+    result: list[dict[str, Any]] = []
+    for block in content_blocks:
+        if block.type == "text":
+            result.append({"type": "text", "text": block.text})
+        elif block.type == "tool_use":
+            result.append(
+                {
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": dict(block.input),
+                }
+            )
+    return result
+
+
+def _apply_sliding_window(
+    messages: list[dict[str, Any]],
+    max_total: int,
+) -> list[dict[str, Any]]:
+    """Trim message history to at most *max_total* entries.
+
+    Oldest messages are dropped first.  After trimming the result is
+    guaranteed to start with a user-role message so the Anthropic API
+    never rejects the history due to a leading assistant turn.
+    """
+    if len(messages) <= max_total:
+        return messages
+
+    kept = messages[-max_total:]
+    # Advance past any leading assistant turns.
+    while kept and kept[0].get("role") != "user":
+        kept = kept[1:]
+    if not kept:
+        kept = messages[-1:]
+
+    logger.info(
+        "Sliding window: %d → %d messages (max=%d)",
+        len(messages),
+        len(kept),
+        max_total,
+    )
+    return kept
 
 
 # ──────────────────────────────────────────────────────────────────── #
@@ -211,7 +185,7 @@ _client = AsyncAnthropic(
 
 
 class DataScienceAgentService:
-    """Orchestrates the ReAct loop for one user turn.
+    """Orchestrates the native tool-calling loop for one user turn.
 
     Maintains a per-session CodeRunner in a dict keyed by session_id.
     """
@@ -229,26 +203,31 @@ class DataScienceAgentService:
     async def _call_claude_with_retry(
         self,
         session: AnalysisSession,
-        system_prompt: str,
-    ) -> str:
-        """Call the Anthropic API with structured error classification.
+    ) -> Message:
+        """Call the Anthropic API with cached system + tools and structured error classification.
 
-        The SDK-level ``max_retries`` setting already handles transient
-        connection errors and 429 rate-limit responses.  This method adds
-        application-level exception classification on top:
+        Applies the sliding window *before* the call to prevent context overflow.
+        The SDK-level ``max_retries`` handles transient connection errors and 429s.
+        Application-level exception mapping:
 
         - ``LLMAuthenticationError`` — fast-fail; no retry makes sense.
-        - ``LLMContextOverflowError`` — 400 "prompt too long"; caller must
+        - ``LLMContextOverflowError`` — 400 "prompt too long"; caller should
           inform the user to start a new session.
         - ``LLMAPIError`` — any other Anthropic API failure.
         """
         import anthropic as _ant
 
+        # Proactive sliding window — trim before we hit the API limit.
+        session.messages = _apply_sliding_window(
+            session.messages, max_total=settings.max_context_messages
+        )
+
         try:
             response = await _client.messages.create(
                 model=settings.claude_model,
                 max_tokens=settings.max_tokens,
-                system=system_prompt,
+                system=_CACHED_SYSTEM,
+                tools=_CACHED_TOOLS,
                 messages=session.messages,
             )
         except _ant.AuthenticationError as exc:
@@ -284,12 +263,7 @@ class DataScienceAgentService:
                 f"Unexpected error calling Claude API: {type(exc).__name__}: {exc}"
             ) from exc
 
-        raw_text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                raw_text = block.text
-                break
-        return raw_text
+        return response
 
     def _build_tool_registry(
         self, session: AnalysisSession, runner: CodeRunner
@@ -363,19 +337,19 @@ class DataScienceAgentService:
         }
 
     async def run(self, session: AnalysisSession, user_message: str) -> str:
-        """Execute the ReAct loop for one user turn.
+        """Execute the tool-calling loop for one user turn.
 
         Args:
             session: The AnalysisSession (mutated in place).
             user_message: The user's natural language request.
 
         Returns:
-            The Final Answer text.
+            The final answer text from Claude.
 
         Raises:
-            ReActLoopError: If the loop exceeds MAX_REACT_ITERATIONS or encounters
-                            unrecoverable parsing failures.
-            LLMContextOverflowError: If the message history is too long.
+            ReActLoopError: If the loop exceeds MAX_REACT_ITERATIONS or hits
+                            an unexpected stop_reason.
+            LLMContextOverflowError: If context cannot be recovered by sliding window.
             LLMAuthenticationError: If the API key is invalid.
             LLMAPIError: For any other Anthropic API failure.
 
@@ -385,9 +359,8 @@ class DataScienceAgentService:
         """
         runner = self._get_runner(session)
         tool_registry = self._build_tool_registry(session, runner)
-        system_prompt = _build_system_prompt()
 
-        # Snapshot message history BEFORE appending anything (Gap 2).
+        # Snapshot message history BEFORE appending anything.
         # Rolled back if an LLM API error is raised, keeping the session clean.
         checkpoint = len(session.messages)
 
@@ -396,7 +369,6 @@ class DataScienceAgentService:
                 session=session,
                 user_message=user_message,
                 tool_registry=tool_registry,
-                system_prompt=system_prompt,
             )
         except (LLMAPIError, LLMContextOverflowError, LLMAuthenticationError):
             # Roll back any partial messages added during this run
@@ -415,140 +387,119 @@ class DataScienceAgentService:
         session: AnalysisSession,
         user_message: str,
         tool_registry: dict,
-        system_prompt: str,
     ) -> str:
-        """Inner ReAct loop (separated from run() to keep rollback logic clean)."""
+        """Inner native tool-calling loop (separated from run() for clean rollback)."""
         session.add_user_message(user_message)
-
-        last_thought = ""
-        parse_error_count = 0
 
         for iteration in range(settings.max_react_iterations):
             logger.debug(
-                "ReAct iteration %d/%d (session=%s)",
+                "Tool-use iteration %d/%d (session=%s)",
                 iteration + 1,
                 settings.max_react_iterations,
                 session.session_id,
             )
 
-            # ── Call Claude (classified, retried by SDK) ───────────── #
-            raw_text = await self._call_claude_with_retry(session, system_prompt)
+            response = await self._call_claude_with_retry(session)
 
-            logger.debug("Claude raw response (iter %d): %.300s", iteration, raw_text)
+            # Serialise content blocks and persist as the assistant turn.
+            assistant_content = _content_to_dict(response.content)
+            session.add_assistant_message(assistant_content)
 
-            # ── Parse ReAct format ─────────────────────────────────── #
-            parsed = _parse_react(raw_text)
-
-            if parsed["type"] == "final_answer":
-                final_answer = parsed["answer"]
-                last_thought = parsed.get("thought", "")
-                session.add_assistant_message(raw_text)
+            # ── Terminal: Claude is done ───────────────────────────── #
+            if response.stop_reason == "end_turn":
+                answer = next(
+                    (b["text"] for b in assistant_content if b.get("type") == "text"),
+                    "",
+                )
                 session.append_react_step(
-                    thought=last_thought,
-                    action="Final Answer",
-                    observation=final_answer,
+                    thought="", action="Final Answer", observation=answer
                 )
                 logger.info(
-                    "ReAct completed in %d iterations (session=%s)",
+                    "Tool-use loop completed in %d iterations (session=%s)",
                     iteration + 1,
                     session.session_id,
                 )
-                return final_answer
+                return answer
 
-            if parsed["type"] == "parse_error":
-                parse_error_count += 1
-                logger.warning(
-                    "ReAct parse error (session=%s, attempt %d/3): %s",
-                    session.session_id,
-                    parse_error_count,
-                    parsed["reason"],
+            # ── Tool dispatch ──────────────────────────────────────── #
+            if response.stop_reason == "tool_use":
+                # Extract optional preceding thought text.
+                thought = next(
+                    (b["text"] for b in assistant_content if b.get("type") == "text"),
+                    "",
                 )
-                # Record parse errors in the trace with a sentinel action (Gap 16)
-                session.append_react_step(
-                    thought=last_thought,
-                    action="__parse_error__",
-                    observation=(
-                        f"Parse error {parse_error_count}/3: {parsed['reason']} "
-                        f"| raw={parsed['raw'][:200]}"
-                    ),
-                )
-                if parse_error_count >= 3:
-                    raise ReActLoopError(
-                        f"Repeated parse failures: {parsed['reason']}",
-                        iterations=iteration + 1,
-                        last_thought=last_thought,
+                tool_results: list[dict[str, Any]] = []
+
+                for block in response.content:
+                    if block.type != "tool_use":
+                        continue
+
+                    handler = tool_registry.get(block.name)
+                    if handler is None:
+                        observation = (
+                            f"Error: Unknown tool '{block.name}'. "
+                            f"Available tools: {list(tool_registry.keys())}"
+                        )
+                    else:
+                        try:
+                            observation = handler(dict(block.input))
+                        except Exception as exc:
+                            logger.error(
+                                "Tool '%s' raised unexpectedly: %s",
+                                block.name,
+                                exc,
+                                exc_info=True,
+                            )
+                            observation = f"Error: Tool '{block.name}' failed — {exc}"
+
+                    MAX_OBS = 8000
+                    if len(observation) > MAX_OBS:
+                        observation = (
+                            observation[:MAX_OBS] + f"\n[...truncated at {MAX_OBS} chars]"
+                        )
+
+                    logger.info(
+                        "Dispatched tool '%s' with input: %s (session=%s)",
+                        block.name,
+                        str(dict(block.input))[:200],
+                        session.session_id,
                     )
-                # Inject correction message
-                correction = (
-                    f"Your response did not follow the required format. "
-                    f"Reason: {parsed['reason']}\n\n"
-                    "Please respond using EXACTLY this format:\n"
-                    "Thought: <your reasoning>\n"
-                    "Action: <tool_name>\n"
-                    'Action Input: {"param": "value"}\n\n'
-                    "OR if you have the final answer:\n"
-                    "Thought: <final reasoning>\n"
-                    "Final Answer: <your answer>"
-                )
-                session.add_assistant_message(raw_text)
-                session.add_user_message(correction)
+                    session.append_react_step(
+                        thought=thought,
+                        action=f"{block.name}({json.dumps(dict(block.input))})",
+                        observation=observation,
+                    )
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": observation,
+                        }
+                    )
+
+                session.add_tool_results(tool_results)
                 continue
 
-            # ── Dispatch tool ──────────────────────────────────────── #
-            thought = parsed.get("thought", "")
-            action_name = parsed["action"]
-            action_input = parsed.get("action_input", {})
-            last_thought = thought
-
-            logger.info(
-                "Dispatching tool '%s' with input: %s (session=%s)",
-                action_name,
-                str(action_input)[:200],
+            # ── Unexpected stop_reason ─────────────────────────────── #
+            logger.warning(
+                "Unexpected stop_reason '%s' (session=%s, iteration=%d)",
+                response.stop_reason,
                 session.session_id,
+                iteration + 1,
             )
-
-            handler = tool_registry.get(action_name)
-            if handler is None:
-                observation = (
-                    f"Error: Unknown tool '{action_name}'. "
-                    f"Available tools: {list(tool_registry.keys())}"
-                )
-            else:
-                try:
-                    observation = handler(action_input)
-                except Exception as exc:
-                    logger.error(
-                        "Tool '%s' raised unexpectedly: %s",
-                        action_name, exc, exc_info=True
-                    )
-                    observation = f"Error: Tool '{action_name}' failed — {exc}"
-
-            # Truncate very long observations
-            MAX_OBS = 8000
-            if len(observation) > MAX_OBS:
-                observation = observation[:MAX_OBS] + f"\n[...truncated at {MAX_OBS} chars]"
-
             session.append_react_step(
-                thought=thought,
-                action=f"{action_name}({json.dumps(action_input)})",
-                observation=observation,
+                thought="",
+                action="__unexpected_stop__",
+                observation=f"stop_reason={response.stop_reason}",
             )
-
-            # Build the next assistant + user turn
-            assistant_content = (
-                f"Thought: {thought}\n"
-                f"Action: {action_name}\n"
-                f"Action Input: {json.dumps(action_input)}"
+            raise ReActLoopError(
+                f"Unexpected stop_reason: '{response.stop_reason}'",
+                iterations=iteration + 1,
             )
-            observation_content = f"Observation: {observation}"
-
-            session.add_assistant_message(assistant_content)
-            session.add_user_message(observation_content)
 
         raise ReActLoopError(
             f"Reached maximum iterations ({settings.max_react_iterations}) without a Final Answer.",
             iterations=settings.max_react_iterations,
-            last_thought=last_thought,
         )
 
     def shutdown_session(self, session_id: str) -> None:

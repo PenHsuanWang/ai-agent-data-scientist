@@ -1,10 +1,11 @@
-"""Tests for app.services.data_agent — Gaps 1, 2, 3, 16.
+"""Tests for app.services.data_agent.
 
 Covers:
   - _call_claude_with_retry: LLM exception classification
-  - run(): session rollback on LLM error (Gap 2)
-  - _run_loop: parse error sentinel + correction injection (Gap 16)
-  - ReActMaxIterationsError raised after MAX_REACT_ITERATIONS
+  - run(): session rollback on LLM error
+  - _run_loop: native tool-calling loop — end_turn, tool_use, unexpected stop_reason,
+               unknown tool, max iterations
+  - _apply_sliding_window: message history truncation
 """
 from __future__ import annotations
 
@@ -19,6 +20,45 @@ from app.domain.exceptions import (
     LLMContextOverflowError,
     ReActLoopError,
 )
+
+
+# ── Mock builders ─────────────────────────────────────────────────────── #
+
+
+def _make_end_turn_response(text: str) -> MagicMock:
+    """Mock a Claude response with stop_reason='end_turn' and a text block."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+    resp = MagicMock()
+    resp.stop_reason = "end_turn"
+    resp.content = [block]
+    return resp
+
+
+def _make_tool_use_response(
+    tool_name: str,
+    tool_id: str = "toolu_001",
+    input_data: dict | None = None,
+) -> MagicMock:
+    """Mock a Claude response with stop_reason='tool_use'."""
+    block = MagicMock()
+    block.type = "tool_use"
+    block.id = tool_id
+    block.name = tool_name
+    block.input = input_data or {}
+    resp = MagicMock()
+    resp.stop_reason = "tool_use"
+    resp.content = [block]
+    return resp
+
+
+def _make_unexpected_response() -> MagicMock:
+    """Mock a Claude response with an unrecognised stop_reason."""
+    resp = MagicMock()
+    resp.stop_reason = "unexpected_stop"
+    resp.content = []
+    return resp
 
 
 # ── fixtures ─────────────────────────────────────────────────────────── #
@@ -46,20 +86,6 @@ def mock_runner():
     return runner
 
 
-def _make_claude_response(text: str) -> MagicMock:
-    block = MagicMock()
-    block.text = text
-    resp = MagicMock()
-    resp.content = [block]
-    return resp
-
-
-_FINAL_ANSWER = (
-    "Thought: done\n"
-    "Final Answer: The mean efficiency is 42.5%"
-)
-
-
 # ── _call_claude_with_retry: exception classification ────────────────── #
 
 
@@ -67,24 +93,24 @@ class TestCallClaudeWithRetry:
     async def test_maps_auth_error_to_llm_authentication_error(
         self, agent, session, anthropic_auth_error
     ):
-        """Gap 1: AuthenticationError → LLMAuthenticationError."""
+        """AuthenticationError → LLMAuthenticationError."""
         with patch("app.services.data_agent._client") as mock_client:
             mock_client.messages.create = AsyncMock(
                 side_effect=anthropic_auth_error()
             )
             with pytest.raises(LLMAuthenticationError):
-                await agent._call_claude_with_retry(session, "system")
+                await agent._call_claude_with_retry(session)
 
     async def test_maps_context_overflow_to_llm_context_overflow_error(
         self, agent, session, anthropic_context_overflow_error
     ):
-        """Gap 3: BadRequestError with 'prompt is too long' → LLMContextOverflowError."""
+        """BadRequestError with 'prompt is too long' → LLMContextOverflowError."""
         with patch("app.services.data_agent._client") as mock_client:
             mock_client.messages.create = AsyncMock(
                 side_effect=anthropic_context_overflow_error()
             )
             with pytest.raises(LLMContextOverflowError):
-                await agent._call_claude_with_retry(session, "system")
+                await agent._call_claude_with_retry(session)
 
     async def test_maps_generic_bad_request_to_llm_api_error(
         self, agent, session, anthropic_bad_request_error
@@ -95,38 +121,37 @@ class TestCallClaudeWithRetry:
                 side_effect=anthropic_bad_request_error("Unsupported parameter")
             )
             with pytest.raises(LLMAPIError) as exc_info:
-                await agent._call_claude_with_retry(session, "system")
-            # Must NOT be the more specific subclass
+                await agent._call_claude_with_retry(session)
             assert type(exc_info.value) is LLMAPIError
 
     async def test_maps_connection_error_to_llm_api_error(
         self, agent, session, anthropic_connection_error
     ):
-        """Gap 1: APIConnectionError → LLMAPIError."""
+        """APIConnectionError → LLMAPIError."""
         with patch("app.services.data_agent._client") as mock_client:
             mock_client.messages.create = AsyncMock(
                 side_effect=anthropic_connection_error()
             )
             with pytest.raises(LLMAPIError):
-                await agent._call_claude_with_retry(session, "system")
+                await agent._call_claude_with_retry(session)
 
-    async def test_returns_text_on_success(self, agent, session):
+    async def test_returns_response_on_success(self, agent, session):
+        """Successful call returns the full Message response object."""
+        mock_resp = _make_end_turn_response("Hello")
         with patch("app.services.data_agent._client") as mock_client:
-            mock_client.messages.create = AsyncMock(
-                return_value=_make_claude_response("Hello")
-            )
-            text = await agent._call_claude_with_retry(session, "system")
-        assert text == "Hello"
+            mock_client.messages.create = AsyncMock(return_value=mock_resp)
+            response = await agent._call_claude_with_retry(session)
+        assert response.stop_reason == "end_turn"
 
 
-# ── run(): session rollback on LLM error (Gap 2) ─────────────────────── #
+# ── run(): session rollback on LLM error ─────────────────────────────── #
 
 
 class TestRunRollback:
     async def test_rolls_back_messages_on_llm_auth_error(
         self, agent, session, mock_runner, anthropic_auth_error
     ):
-        """Gap 2: session messages must revert to pre-run count on LLMAuthenticationError."""
+        """Session messages must revert to pre-run count on LLMAuthenticationError."""
         initial_count = len(session.messages)
 
         with patch("app.services.data_agent._client") as mock_client:
@@ -142,7 +167,7 @@ class TestRunRollback:
     async def test_rolls_back_messages_on_context_overflow(
         self, agent, session, mock_runner, anthropic_context_overflow_error
     ):
-        """Gap 2: session messages must revert on LLMContextOverflowError."""
+        """Session messages must revert on LLMContextOverflowError."""
         initial_count = len(session.messages)
 
         with patch("app.services.data_agent._client") as mock_client:
@@ -158,7 +183,7 @@ class TestRunRollback:
     async def test_rolls_back_to_checkpoint_not_absolute_zero(
         self, agent, session, mock_runner, anthropic_auth_error
     ):
-        """Rollback must restore to pre-call state, not empty, if session had prior messages."""
+        """Rollback must restore to pre-call state, not to empty, if session had prior messages."""
         session.add_user_message("prior message")
         session.add_assistant_message("prior reply")
         checkpoint = len(session.messages)
@@ -179,135 +204,191 @@ class TestRunRollback:
         """ReActLoopError must NOT trigger rollback — trace is useful for debugging."""
         session.add_user_message("old msg")
 
-        # Claude keeps returning malformed text → triggers parse error rollup
         with patch("app.services.data_agent._client") as mock_client:
             mock_client.messages.create = AsyncMock(
-                return_value=_make_claude_response("gibberish with no format")
+                return_value=_make_unexpected_response()
             )
             with patch.object(agent, "_get_runner", return_value=mock_runner):
                 with pytest.raises(ReActLoopError):
                     await agent.run(session, "analyse please")
 
-        # Messages were appended (not rolled back)
+        # User message was appended before the error (not rolled back)
         assert len(session.messages) > 1
 
 
-# ── parse error sentinel (Gap 16) ────────────────────────────────────── #
+# ── Native tool-calling loop ──────────────────────────────────────────── #
 
 
-class TestParseErrorSentinel:
-    async def test_parse_error_appends_sentinel_to_trace(
-        self, agent, session, mock_runner
-    ):
-        """Gap 16: parse errors must be recorded as '__parse_error__' actions in react_trace."""
+class TestToolCallingLoop:
+    async def test_completes_on_end_turn_response(self, agent, session, mock_runner):
+        """Loop terminates and returns text when stop_reason is 'end_turn'."""
         with patch("app.services.data_agent._client") as mock_client:
             mock_client.messages.create = AsyncMock(
-                return_value=_make_claude_response("nonsense response")
+                return_value=_make_end_turn_response("The mean efficiency is 42.5%")
+            )
+            with patch.object(agent, "_get_runner", return_value=mock_runner):
+                result = await agent.run(session, "analyse data")
+
+        assert "42.5%" in result
+
+    async def test_dispatches_tool_then_completes(self, agent, session, mock_runner):
+        """Loop dispatches tool_use block, appends result, then returns on end_turn."""
+        responses = [
+            _make_tool_use_response("list_datasets", "toolu_001", {}),
+            _make_end_turn_response("Found 2 datasets."),
+        ]
+        with patch("app.services.data_agent._client") as mock_client:
+            mock_client.messages.create = AsyncMock(side_effect=responses)
+            with patch.object(agent, "_get_runner", return_value=mock_runner):
+                with patch("app.services.data_agent.list_datasets", return_value='["data.csv"]'):
+                    result = await agent.run(session, "list datasets")
+
+        assert "Found 2 datasets" in result
+
+    async def test_tool_result_message_appended_to_session(
+        self, agent, session, mock_runner
+    ):
+        """Tool results are stored as user messages with tool_result content blocks."""
+        responses = [
+            _make_tool_use_response("list_datasets", "toolu_001", {}),
+            _make_end_turn_response("Done."),
+        ]
+        with patch("app.services.data_agent._client") as mock_client:
+            mock_client.messages.create = AsyncMock(side_effect=responses)
+            with patch.object(agent, "_get_runner", return_value=mock_runner):
+                with patch("app.services.data_agent.list_datasets", return_value='[]'):
+                    await agent.run(session, "test")
+
+        tool_result_msgs = [
+            m for m in session.messages
+            if isinstance(m.get("content"), list)
+            and any(b.get("type") == "tool_result" for b in m["content"])
+        ]
+        assert len(tool_result_msgs) >= 1
+
+    async def test_unexpected_stop_reason_raises_react_loop_error(
+        self, agent, session, mock_runner
+    ):
+        """An unrecognised stop_reason raises ReActLoopError."""
+        with patch("app.services.data_agent._client") as mock_client:
+            mock_client.messages.create = AsyncMock(
+                return_value=_make_unexpected_response()
+            )
+            with patch.object(agent, "_get_runner", return_value=mock_runner):
+                with pytest.raises(ReActLoopError):
+                    await agent.run(session, "test")
+
+    async def test_unexpected_stop_reason_recorded_in_trace(
+        self, agent, session, mock_runner
+    ):
+        """Unexpected stop_reason is recorded with __unexpected_stop__ sentinel."""
+        with patch("app.services.data_agent._client") as mock_client:
+            mock_client.messages.create = AsyncMock(
+                return_value=_make_unexpected_response()
             )
             with patch.object(agent, "_get_runner", return_value=mock_runner):
                 with pytest.raises(ReActLoopError):
                     await agent.run(session, "test")
 
         sentinel_steps = [
-            s for s in session.react_trace if s.get("action") == "__parse_error__"
+            s for s in session.react_trace
+            if s.get("action") == "__unexpected_stop__"
         ]
         assert len(sentinel_steps) >= 1
 
-    async def test_three_parse_errors_raise_react_loop_error(
+    async def test_unknown_tool_observation_returned_not_raised(
         self, agent, session, mock_runner
     ):
-        """Three consecutive parse failures must raise ReActLoopError."""
+        """Calling an unknown tool name produces an error observation, not an exception."""
+        responses = [
+            _make_tool_use_response("nonexistent_tool", "toolu_001", {}),
+            _make_end_turn_response("Noted the error."),
+        ]
         with patch("app.services.data_agent._client") as mock_client:
+            mock_client.messages.create = AsyncMock(side_effect=responses)
+            with patch.object(agent, "_get_runner", return_value=mock_runner):
+                await agent.run(session, "test")
+
+        error_steps = [
+            s for s in session.react_trace
+            if "Unknown tool" in s.get("observation", "")
+        ]
+        assert len(error_steps) >= 1
+
+    async def test_max_iterations_raises_react_loop_error(
+        self, agent, session, mock_runner
+    ):
+        """Exhausting max_react_iterations raises ReActLoopError."""
+        with patch("app.services.data_agent._client") as mock_client:
+            # Always return tool_use — loop never gets end_turn.
             mock_client.messages.create = AsyncMock(
-                return_value=_make_claude_response("not a valid react response")
+                return_value=_make_tool_use_response("list_datasets", "toolu_001", {})
             )
             with patch.object(agent, "_get_runner", return_value=mock_runner):
-                with pytest.raises(ReActLoopError) as exc_info:
-                    await agent.run(session, "test")
+                with patch("app.services.data_agent.list_datasets", return_value="[]"):
+                    with patch("app.services.data_agent.settings") as mock_cfg:
+                        mock_cfg.max_react_iterations = 2
+                        mock_cfg.max_context_messages = 100
+                        mock_cfg.claude_model = "claude-test"
+                        mock_cfg.max_tokens = 1024
+                        with pytest.raises(ReActLoopError) as exc_info:
+                            await agent.run(session, "test")
 
-        exc = exc_info.value
-        assert exc.iterations >= 3
+        assert exc_info.value.iterations == 2
 
 
-# ── _parse_react utility ─────────────────────────────────────────────── #
+# ── _apply_sliding_window ─────────────────────────────────────────────── #
 
 
-class TestParseReact:
-    def test_parses_final_answer(self):
-        from app.services.data_agent import _parse_react
+class TestSlidingWindow:
+    def test_no_truncation_when_under_limit(self):
+        from app.services.data_agent import _apply_sliding_window
 
-        text = "Thought: I'm done\nFinal Answer: 42%"
-        result = _parse_react(text)
+        messages = [
+            {"role": "user", "content": "a"},
+            {"role": "assistant", "content": "b"},
+        ]
+        assert _apply_sliding_window(messages, max_total=10) == messages
 
-        assert result["type"] == "final_answer"
-        assert result["answer"] == "42%"
-        assert result["thought"] == "I'm done"
+    def test_no_truncation_at_exact_limit(self):
+        from app.services.data_agent import _apply_sliding_window
 
-    def test_parses_action_and_json_input(self):
-        from app.services.data_agent import _parse_react
+        messages = [{"role": "user", "content": str(i)} for i in range(5)]
+        assert _apply_sliding_window(messages, max_total=5) == messages
 
-        text = (
-            'Thought: Check datasets\n'
-            'Action: list_datasets\n'
-            'Action Input: {}'
-        )
-        result = _parse_react(text)
+    def test_truncates_to_max_total(self):
+        from app.services.data_agent import _apply_sliding_window
 
-        assert result["type"] == "action"
-        assert result["action"] == "list_datasets"
-        assert result["action_input"] == {}
+        messages = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": str(i)}
+            for i in range(10)
+        ]
+        result = _apply_sliding_window(messages, max_total=4)
+        assert len(result) <= 4
+        assert result[-1] == messages[-1]
 
-    def test_parse_error_when_no_action_or_final_answer(self):
-        from app.services.data_agent import _parse_react
+    def test_result_starts_with_user_message(self):
+        from app.services.data_agent import _apply_sliding_window
 
-        result = _parse_react("Random text without format")
+        # After taking the last 4 of 5 messages the first kept entry is
+        # assistant-role; the window should advance to the next user turn.
+        messages = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+            {"role": "user", "content": "u3"},
+        ]
+        result = _apply_sliding_window(messages, max_total=4)
+        assert result[0].get("role") == "user"
 
-        assert result["type"] == "parse_error"
-        assert "raw" in result
-        assert "reason" in result
+    def test_keeps_most_recent_messages(self):
+        from app.services.data_agent import _apply_sliding_window
 
-    def test_parse_error_when_invalid_json_input(self):
-        from app.services.data_agent import _parse_react
-
-        text = (
-            "Thought: check\n"
-            "Action: inspect_dataset\n"
-            "Action Input: {not valid json !!!}"
-        )
-        result = _parse_react(text)
-
-        assert result["type"] == "parse_error"
-
-    def test_action_input_defaults_to_empty_dict_when_missing(self):
-        from app.services.data_agent import _parse_react
-
-        text = (
-            "Thought: check\n"
-            "Action: list_datasets\n"
-        )
-        result = _parse_react(text)
-
-        # No action_input line → defaults to {}
-        if result["type"] == "action":
-            assert result["action_input"] == {}
-
-    def test_case_insensitive_final_answer(self):
-        from app.services.data_agent import _parse_react
-
-        text = "Thought: done\nfinal answer: result"
-        result = _parse_react(text)
-
-        assert result["type"] == "final_answer"
-
-    def test_extracts_action_name_without_spaces(self):
-        from app.services.data_agent import _parse_react
-
-        text = (
-            'Thought: need data\n'
-            'Action: inspect_dataset\n'
-            'Action Input: {"file_name": "data.csv"}'
-        )
-        result = _parse_react(text)
-
-        assert result["action"] == "inspect_dataset"
-        assert result["action_input"]["file_name"] == "data.csv"
+        messages = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": str(i)}
+            for i in range(8)
+        ]
+        result = _apply_sliding_window(messages, max_total=4)
+        # The last message must be retained.
+        assert result[-1] == messages[-1]
